@@ -20,8 +20,8 @@ INDUSTRY_DIR = DATA_DIR / "industry_flow"
 CONCEPT_DIR = DATA_DIR / "concept_flow"
 AMO_DIR = DATA_DIR / "amo_components"
 DAILY_PCT_DIR = DATA_DIR / "daily_pct"
-
-
+CONCEPT_PICKS_DIR = DATA_DIR / "concept_picks"
+LIMIT_UP_STREAK_DIR = DATA_DIR / "limit_up_streak"
 MAP_FILE = DATA_DIR / "stock_sector_map.parquet" # 行业概念映射文件
 INDEX_FILE = DATA_DIR / "index_amount.parquet" # 指数资金流文件
 

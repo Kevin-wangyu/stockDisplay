@@ -720,11 +720,12 @@ def _market_avg_amount(trade_date: str, days: int) -> float:
 
 @lru_cache(maxsize=32)
 def get_concept_date_top10(trade_date: str) -> dict:
+    """三榜 + 交集榜（纯读缓存，< 100ms）。"""
     market_total, top_amount, top_pct, top_limit_up, _ = \
         _get_tops_and_scores(trade_date)
 
-    picks = _build_intersection_picks(
-        top_amount, top_pct, top_limit_up, trade_date, market_total)
+    # picks：纯读 parquet 缓存，没有就空（不现场算）
+    picks = _load_cached_picks(trade_date) or []
 
     return {
         "trade_date": trade_date,
@@ -735,8 +736,8 @@ def get_concept_date_top10(trade_date: str) -> dict:
         "top_pct":      top_pct,
         "top_limit_up": top_limit_up,
         "intersection_picks": picks,
+        "picks_cached": picks is not None and len(picks) > 0,
     }
-
 
 # ───────────────────────── 内部工具 ─────────────────────────
 
@@ -1613,13 +1614,13 @@ def get_limit_up_ladder(trade_date: str, min_days: int = 2) -> dict:
     """涨停天梯榜：cache miss 时只算单日（< 0.5s），不跑全量。"""
     cache_path = LIMIT_UP_STREAK_DIR / f"trade_date={trade_date}" / "part.parquet"
     if not cache_path.exists():
-        # 单日生成（含 30 天预热），< 0.5s，不跑全量
-        try:
-            _rebuild_streak_for_date(trade_date)
-        except Exception:
-            logger.exception("[limit_up_ladder] 单日重算失败 %s", trade_date)
-    if not cache_path.exists():
-        return {"trade_date": trade_date, "stocks": []}
+        # 未预计算 → 返回空，前端提示
+        return {
+            "trade_date": trade_date,
+            "stocks": [],
+            "cached": False,
+            "hint": "该日期未预计算，请运行 precompute.py",
+        }
 
     try:
         df = pd.read_parquet(cache_path)

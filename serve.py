@@ -223,30 +223,29 @@ def main() -> None:
     except Exception:
         logger.exception("[serve] 数据完整性检查失败（不影响启动）")
 
-    # 启动时增量刷新两个汇总表
+    # 启动时只增量最近 3 天（< 5s）
     try:
         from queries import (
-            rebuild_market_amount, rebuild_daily_pct, rebuild_limit_up_streak,
-            get_concept_date_top10, get_limit_up_ladder,
+            rebuild_market_amount, rebuild_daily_pct, rebuild_limit_up_streak, 
+            _get_tops_and_scores, _build_intersection_picks, _save_picks_cache,
+            _list_partition_dates,
         )
+        from config import CONCEPT_DIR, CONCEPT_PICKS_DIR
         rebuild_market_amount()
-        rebuild_daily_pct(force_recent_days=10)
-        rebuild_limit_up_streak(limit_days=200)   # 2.8s 全量 streak
-
-        # ── 预热最近 20 天的 lru_cache（第一次查询也 < 100ms）──
-        print("[serve] 预热最近 20 天缓存…")
-        from queries import _list_partition_dates
-        from config import CONCEPT_DIR
+        rebuild_daily_pct(force_recent_days=3)
+        rebuild_limit_up_streak(limit_days=3, force_recent_days=3)
+        # 顺便补一下最新日期的 picks
         all_td = _list_partition_dates(CONCEPT_DIR)
-        for d in all_td[-20:]:
-            try:
-                get_concept_date_top10(d)
-                get_limit_up_ladder(d)
-            except Exception:
-                pass
-        print("[serve] 预热完成")
+        for d in all_td[-1:]:
+            p = CONCEPT_PICKS_DIR / f"trade_date={d}" / "part.parquet"
+            if not p.exists():
+                mt, ta, tp, tl, _ = _get_tops_and_scores(d)
+                picks = _build_intersection_picks(ta, tp, tl, d, mt)
+                _save_picks_cache(d, picks)
     except Exception:
-        logging.getLogger(__name__).exception("启动预热失败，继续启动")
+        logging.getLogger(__name__).exception("增量更新失败，继续启动")
+
+
 
     # ── 4. 启动 uvicorn ──
     import uvicorn

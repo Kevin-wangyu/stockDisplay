@@ -770,7 +770,13 @@
   font-size: 12px;
   text-align: center;
 }
-
+.v1-picks-empty code,
+.v1-ladder-empty code {
+  background: #2a2e39;
+  padding: 1px 6px;
+  border-radius: 3px;
+  color: #6ea8ff;
+}
 
 /* ─────────── 界面 2 ─────────── */
 #view2 {

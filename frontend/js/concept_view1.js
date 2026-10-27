@@ -327,9 +327,18 @@ function v1RenderPicks(picks) {
   v1El.picksList.innerHTML = headHtml + rowsHtml;
   v1UpdateSortIndicator();
 }
+
+let __loadView1Last = { date: null, ts: 0 };
 async function loadView1() {
   const date = document.getElementById("v1Date").value;
   if (!date) return;
+  // 同一日期 300ms 内不重复执行
+  const now = Date.now();
+  if (date === __loadView1Last.date && now - __loadView1Last.ts < 300) {
+    return;
+  }
+  __loadView1Last = { date, ts: now };
+
   setStatus("加载中…");
   try {
     // 串行：第一个请求把所有缓存预热，第二个请求全部命中
@@ -365,6 +374,21 @@ async function loadView1() {
     // 交集榜
     v1LastPicks = data.intersection_picks || [];
     v1RenderPicks(v1LastPicks);
+        // 未缓存提示
+    if (!data.picks_cached) {
+      v1El.picksList.innerHTML = `
+        <div class="v1-picks-empty">
+          该日期未预计算交集榜，请运行 <code>python precompute.py</code>
+        </div>`;
+    }
+
+    // 天梯榜未缓存提示
+    if (ladder.cached === false) {
+      v1El.ladderList.innerHTML = `
+        <div class="v1-ladder-empty">
+          该日期未预计算天梯榜，请运行 <code>python precompute.py</code>
+        </div>`;
+    }
 
     // 状态栏（不用 reduce）
     const ladderCount = Array.isArray(ladder.stocks)
@@ -389,31 +413,13 @@ document.querySelectorAll(".v1-pick-row .col-code").forEach(el => {
   el.style.cursor = "pointer";
   el.style.textDecoration = "underline";
 });
-// 绑定（先解绑再绑，防止重复）
-(function bindDayNav() {
-  const p = document.getElementById("v1PrevDay");
-  const n = document.getElementById("v1NextDay");
-  if (p) {
-    const fresh = p.cloneNode(true);
-    p.parentNode.replaceChild(fresh, p);
-    fresh.addEventListener("click", () => v1ShiftDate("prev"));
-  } else {
-    console.warn("[bindDayNav] #v1PrevDay 不存在");
-  }
-  if (n) {
-    const fresh = n.cloneNode(true);
-    n.parentNode.replaceChild(fresh, n);
-    fresh.addEventListener("click", () => v1ShiftDate("next"));
-  } else {
-    console.warn("[bindDayNav] #v1NextDay 不存在");
-  }
-})();
 
 // ═══════════════════════════════════════════════════════════
 // 安全绑定：所有事件都用 document 委托 + 可选链，不再依赖具体元素存在
 // ═══════════════════════════════════════════════════════════
 
 // ─── 交易日翻页 ───
+let __shiftInFlight = false;
 async function v1ShiftDate(direction) {
   const d = document.getElementById("v1Date")?.value;
   if (!d) return;
