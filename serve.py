@@ -11,7 +11,8 @@
     python serve.py --no-reload             # 关闭热重载（生产）
 """
 from __future__ import annotations
-
+import duckdb
+from trading_calendar import trading_days
 import argparse
 import sys
 from datetime import datetime, date, timedelta
@@ -21,7 +22,13 @@ import logging
 logger = logging.getLogger("serve")
 warnings.filterwarnings("ignore")
 sys.path.append(str(Path(__file__).parent))
-from config import setup_logging
+from config import (
+    DATA_DIR,          # <--- 加上这一行
+    RAW_QUOTE_DIR, RAW_INDUSTRY_DIR, RAW_CONCEPT_DIR, RAW_STOCK_CONCEPT_DIR,
+    QUOTE_DIR, INDUSTRY_DIR, CONCEPT_DIR, CONCEPT_DATE_DIR, RAW_AMO_DIR, AMO_DIR,
+    MAP_FILE, MAP_RAW_FILE,CONCEPT_PICKS_DIR,
+    setup_logging,
+)
 import re
 
 def parse_args() -> argparse.Namespace:
@@ -52,7 +59,6 @@ def _latest_expected_trading_day(n) -> date | None:
 
 def _has_quote_data(trade_date: date) -> bool:
     """quote 分区目录下是否已有该交易日的 parquet。"""
-    from config import QUOTE_DIR
     p = QUOTE_DIR / f"trade_date={trade_date.isoformat()}"
     if not p.exists():
         return False
@@ -130,26 +136,27 @@ def ensure_data_ready() -> None:
         print("[serve] 继续启动服务，请手动检查数据/日志")
 
 def check_data_integrity() -> None:
-    """检查三类 Parquet 数据的日期覆盖，对缺失的交易日 logger.warning。"""
+    """检查数据的日期覆盖，对缺失的交易日 logger.warning。"""
     import duckdb
     from datetime import date
-    from config import QUOTE_DIR, INDUSTRY_DIR, CONCEPT_DIR, CONCEPT_DATE_DIR, AMO_DIR
     from trading_calendar import trading_days
+    import queries
 
     con = duckdb.connect()
+    
+    # 直接使用 queries 里组装好的 glob，concept_date 单独组装
     items = [
-        ("quote", QUOTE_DIR),
-        ("industry_flow", INDUSTRY_DIR),
-        ("concept_flow", CONCEPT_DIR),
-        ("stock_concepts", CONCEPT_DATE_DIR),
+        ("quote", queries.QUOTE_GLOB),
+        ("industry_flow", queries.INDUSTRY_GLOB),
+        ("concept_flow", queries.CONCEPT_GLOB),
+        ("stock_concepts", queries._get_globs(queries.CONCEPT_DATE_DIR, "concept_date")),
     ]
 
-    for name, dir_ in items:
-        glob = str(dir_ / "**" / "*.parquet")
+    for name, glob_expr in items:
         try:
             r = con.execute(
                 f"SELECT MIN(trade_date), MAX(trade_date) "
-                f"FROM read_parquet('{glob}', hive_partitioning=true)"
+                f"FROM read_parquet({glob_expr}, hive_partitioning=true, union_by_name=true)"
             ).fetchone()
         except Exception as e:
             logger.warning("[check] %s 读取失败: %s", name, e)
@@ -162,15 +169,19 @@ def check_data_integrity() -> None:
         def _to_date(x):
             if isinstance(x, date):
                 return x
+            # 兼容脏数据（比如纯年份整数）
+            s = str(x).split(" ")[0].replace("-", "")
+            if len(s) == 8:
+                return date(int(s[:4]), int(s[4:6]), int(s[6:8]))
             return date.fromisoformat(str(x)[:10])
 
         min_d, max_d = _to_date(r[0]), _to_date(r[1])
 
         expected = set(trading_days(min_d, max_d))
         rows = con.execute(
-            f"SELECT DISTINCT trade_date FROM read_parquet('{glob}', hive_partitioning=true)"
+            f"SELECT DISTINCT trade_date FROM read_parquet({glob_expr}, hive_partitioning=true, union_by_name=true)"
         ).fetchall()
-        actual = {_to_date(v[0]) for v in rows}
+        actual = {_to_date(v[0]) for v in rows if v[0]}
 
         missing = sorted(expected - actual)
         logger.info(
@@ -182,9 +193,6 @@ def check_data_integrity() -> None:
             suffix = f" … 共 {len(missing)} 天" if len(missing) > 15 else ""
             logger.warning("[check] %-14s 缺失 %d 个交易日: %s%s",
                            name, len(missing), sample, suffix)
-        else:
-            logger.info("[check] %-14s 无缺失", name)
-
 def main() -> None:
     args = parse_args()
     setup_logging()
@@ -230,10 +238,12 @@ def main() -> None:
             _get_tops_and_scores, _build_intersection_picks, _save_picks_cache,
             _list_partition_dates,
         )
-        from config import CONCEPT_DIR, CONCEPT_PICKS_DIR
-        rebuild_market_amount()
-        rebuild_daily_pct(force_recent_days=3)
-        rebuild_limit_up_streak(limit_days=3, force_recent_days=3)
+        n_ma = rebuild_market_amount()
+        print(f"[serve] market_amount 新增 {n_ma} 天")
+        n_dp = rebuild_daily_pct(force_recent_days=3)
+        print(f"[serve] daily_pct 写入 {n_dp} 天")
+        n_st = rebuild_limit_up_streak(limit_days=3, force_recent_days=3)
+        print(f"[serve] limit_up_streak 写入 {n_st} 天")
         # 顺便补一下最新日期的 picks
         all_td = _list_partition_dates(CONCEPT_DIR)
         for d in all_td[-1:]:

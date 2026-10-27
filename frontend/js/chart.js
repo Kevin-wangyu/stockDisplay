@@ -467,23 +467,42 @@ el.addEventListener("change", () => {
 });
 
 function applyOverlays() {
-if (!state.rows.length) {
+  if (!state.rows.length) {
     for (const k in overlaySeries) overlaySeries[k].setData([]);
     return;
-}
-for (const k of OVERLAY_KEYS) {
+  }
+  const _safeData = (r, name) => {
+    const time = String(r.trade_date ?? "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(time)) return null;
+    const v = r[name];
+    if (v == null || !Number.isFinite(Number(v))) return null;
+    return { time, value: Number(v) };
+  };
+
+  for (const k of OVERLAY_KEYS) {
     if (!overlayVisible[k]) { overlaySeries[k].setData([]); continue; }
-    overlaySeries[k].setData(state.rows.map(r => ({
-    time: r.trade_date, value: r[k],
-    })).filter(d => d.value != null));
-}
-const bollOn = overlayVisible.boll;
-for (const k of BOLL_KEYS) {
+    const map = new Map();
+    state.rows.forEach(r => {
+      const item = _safeData(r, k);
+      if (item) map.set(item.time, item);
+    });
+    overlaySeries[k].setData(
+      Array.from(map.values()).sort((a, b) =>
+        a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
+  }
+
+  const bollOn = overlayVisible.boll;
+  for (const k of BOLL_KEYS) {
     if (!bollOn) { overlaySeries[k].setData([]); continue; }
-    overlaySeries[k].setData(state.rows.map(r => ({
-    time: r.trade_date, value: r[k],
-    })).filter(d => d.value != null));
-}
+    const map = new Map();
+    state.rows.forEach(r => {
+      const item = _safeData(r, k);
+      if (item) map.set(item.time, item);
+    });
+    overlaySeries[k].setData(
+      Array.from(map.values()).sort((a, b) =>
+        a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
+  }
 }
 
 // ─────────────── 加载指标列表 ───────────────

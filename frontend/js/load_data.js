@@ -26,7 +26,7 @@ try {
     const res = await fetch(`/api/stock/${encodeURIComponent(code)}/date_range`);
     if (!res.ok) return;
     const data = await res.json();
-    if (myToken !== loadToken) return; 
+    if (myToken !== rangeToken) return;
     if (data.min_date && data.max_date) {
     document.getElementById("start").value = data.min_date;
     document.getElementById("end").value = data.max_date;
@@ -35,80 +35,157 @@ try {
 } catch (e) { console.error("获取日期范围失败", e); }
 }
 
+let __loadInFlight = false;
 async function load() {
-const myToken = ++loadToken;   
-const code = document.getElementById("code").value.trim();
-if (!code) { setStatus("请输入股票代码", true); return; }
+  if (__loadInFlight) {
+    console.warn("[load] 已有请求进行中，忽略重复调用");
+    return;
+  }
+  __loadInFlight = true;
+  try {
+    const myToken = ++loadToken;   
+    const code = document.getElementById("code").value.trim();
+    if (!code) { setStatus("请输入股票代码", true); return; }
 
-if (dataSource === "concept") {
-    let trade_date = document.getElementById("tradeDate").value;
-    if (!trade_date) {
-    // 没有就现场拉一次 date_range，用 max_date
-    await loadDateRange();
-    trade_date = document.getElementById("tradeDate").value;
-    if (!trade_date) {
-        setStatus("请先选择股票", true);
-        return;
-    }
-    }
-    return loadConcept(code, trade_date);
-}
-
-const start = document.getElementById("start").value;
-const end   = document.getElementById("end").value;
-
-if (!start || !end) { setStatus("请选择日期范围", true); return; }
-if (start > end)    { setStatus("开始日期不能晚于结束日期", true); return; }
-
-btn.disabled = true;
-setStatus("加载中…");
-
-try {
-    const wanted = Array.from(new Set([
-    ...OVERLAY_KEYS,
-    ...BOLL_KEYS,
-    ...state.indicators
-        .filter(i => {
-        const s = i.scope || "all";
-        return s === "all" || s === dataSource;
-        })
-        .map(i => i.name),
-    ]));
-
-    let rows, industryName = "", missing = [];
-
-    if (dataSource === "stock") {
-    const url = `/api/stock/${encodeURIComponent(code)}`
-                + `?start=${start}&end=${end}&indicators=${wanted.join(",")}`;
-    const res = await fetch(url);
-    if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(err.detail || `HTTP ${res.status}`);
-    }
-    const data = await res.json();
-    if (myToken !== loadToken) return; 
-    rows = data.rows;
-    missing = data.missing_dates || [];
-    drawState.drawings = [];
-    redrawDrawings();
-    } else {
-    const url = `/api/stock/${encodeURIComponent(code)}/industry_chart`
-                + `?start=${start}&end=${end}&indicators=${wanted.join(",")}`;
-    const res = await fetch(url);
-    if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(err.detail || `HTTP ${res.status}`);
-    }
-    const data = await res.json();
-    if (myToken !== loadToken) return; 
-    rows = data.rows;
-    industryName = data.industry_name || "";
+    if (dataSource === "concept") {
+        let trade_date = document.getElementById("tradeDate").value;
+        if (!trade_date) {
+        // 没有就现场拉一次 date_range，用 max_date
+        await loadDateRange();
+        trade_date = document.getElementById("tradeDate").value;
+        if (!trade_date) {
+            setStatus("请先选择股票", true);
+            return;
+        }
+        }
+        return loadConcept(code, trade_date);
     }
 
-    state.rows = rows;
-    showMissingWarning(missing);
+    const start = document.getElementById("start").value;
+    const end   = document.getElementById("end").value;
 
-    if (!rows.length) {
+    if (!start || !end) { setStatus("请选择日期范围", true); return; }
+    if (start > end)    { setStatus("开始日期不能晚于结束日期", true); return; }
+
+    btn.disabled = true;
+    setStatus("加载中…");
+
+    try {
+        const wanted = Array.from(new Set([
+        ...OVERLAY_KEYS,
+        ...BOLL_KEYS,
+        ...state.indicators
+            .filter(i => {
+            const s = i.scope || "all";
+            return s === "all" || s === dataSource;
+            })
+            .map(i => i.name),
+        ]));
+
+        let rows, industryName = "", missing = [];
+
+        if (dataSource === "stock") {
+        const url = `/api/stock/${encodeURIComponent(code)}`
+                    + `?start=${start}&end=${end}&indicators=${wanted.join(",")}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({ detail: res.statusText }));
+            throw new Error(err.detail || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        if (myToken !== loadToken) return; 
+        rows = data.rows;
+        missing = data.missing_dates || [];
+        } else {
+        const url = `/api/stock/${encodeURIComponent(code)}/industry_chart`
+                    + `?start=${start}&end=${end}&indicators=${wanted.join(",")}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({ detail: res.statusText }));
+            throw new Error(err.detail || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        if (myToken !== loadToken) return; 
+        rows = data.rows;
+        industryName = data.industry_name || "";
+        }
+        drawState.drawings = [];
+        redrawDrawings();
+
+        state.rows = rows;
+        showMissingWarning(missing);
+
+        if (!rows.length) {
+            candleSeries.setData([]);
+            candleSeries.setMarkers([]);
+            for (const k in overlaySeries) overlaySeries[k].setData([]);
+            rebuildPane("ind1", currentInd1Value, []);
+            rebuildPane("ind2", currentInd2Value, []);
+            rebuildPane("ind3", currentInd3Value, []);
+            chart.timeScale().fitContent();
+            setStatus("该区间无数据");
+            setTimeout(drawNormLabels, 60);
+            return;
+        }
+
+        // ── 健壮的日期标准化（兼容 string / ISO / Date / timestamp） ──
+        const _normDate = (v) => {
+        if (v == null) return null;
+        if (v instanceof Date) {
+            if (isNaN(v.getTime())) return null;
+            const y = v.getFullYear();
+            const m = String(v.getMonth() + 1).padStart(2, "0");
+            const d = String(v.getDate()).padStart(2, "0");
+            return `${y}-${m}-${d}`;
+        }
+        if (typeof v === "number") {
+            const ms = v < 1e10 ? v * 1000 : v;
+            const d = new Date(ms);
+            if (isNaN(d.getTime())) return null;
+            return d.toISOString().slice(0, 10);
+        }
+        const s = String(v);
+        const match = s.match(/^(\d{4}-\d{2}-\d{2})/);
+        return match ? match[1] : null;
+        };
+
+        // ── 严格过滤：日期合法 + OHLC 均 > 0 ──
+        // ── 深度标准化：兼容 null / 0 / 字符串日期 ──
+        const _normCandle = (r) => {
+        if (!r || typeof r !== "object") return null;
+        const rawTime = r.trade_date;
+        if (rawTime == null) return null;
+        const time = String(rawTime).slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(time)) return null;
+
+        const o = r.open, h = r.high, l = r.low, c = r.close;
+        // 严格过滤：任何一个为 null / undefined / 空串 直接丢弃
+        if (o == null || h == null || l == null || c == null) return null;
+
+        const on = Number(o), hn = Number(h), ln = Number(l), cn = Number(c);
+        if (!Number.isFinite(on) || !Number.isFinite(hn)
+            || !Number.isFinite(ln) || !Number.isFinite(cn)) return null;
+        // 过滤 0 值和负数
+        if (on <= 0 || hn <= 0 || ln <= 0 || cn <= 0) return null;
+
+        return { time, open: on, high: hn, low: ln, close: cn };
+        };
+
+        const _map = new Map();
+        const _dropped = [];
+        for (const r of rows) {
+        const item = _normCandle(r);
+        if (item) _map.set(item.time, item);
+        else _dropped.push(r);
+        }
+        const candleData = Array.from(_map.values())
+        .sort((a, b) => a.time < b.time ? -1 : a.time > b.time ? 1 : 0);
+
+        if (_dropped.length) {
+        console.warn(`[load] 过滤 ${_dropped.length} 行异常 K 线，样例:`, _dropped[0]);
+        }
+
+        if (!candleData.length) {
         candleSeries.setData([]);
         candleSeries.setMarkers([]);
         for (const k in overlaySeries) overlaySeries[k].setData([]);
@@ -116,54 +193,71 @@ try {
         rebuildPane("ind2", currentInd2Value, []);
         rebuildPane("ind3", currentInd3Value, []);
         chart.timeScale().fitContent();
-        setStatus("该区间无数据");
-        setTimeout(drawNormLabels, 60);
+        setStatus("该区间数据无效（OHLC 异常）");
         return;
-    }
-
-    candleSeries.setData(rows.map(r => ({
-        time: r.trade_date, open: r.open, high: r.high, low: r.low, close: r.close,
-    })));
-
-    // ── URL center 参数 → 在 K 线上标记跳转日 ──
-    {
-      const params = new URLSearchParams(location.search);
-      const centerParam = params.get("center");
-      let markDate = null;
-      if (centerParam && rows.length) {
-        for (let i = rows.length - 1; i >= 0; i--) {
-          if (rows[i].trade_date <= centerParam) {
-            markDate = rows[i].trade_date;
-            break;
-          }
         }
-      }
-      candleSeries.setMarkers(markDate ? [{
-        time: markDate,
-        position: "aboveBar",
-        color: "#ffb454",
-        shape: "arrowDown",
-        text: "跳转日",
-        size: 1.5,
-      }] : []);
+
+        try {
+        candleSeries.setData(candleData);
+        } catch (e) {
+        console.error("[load] candleSeries.setData 失败", e);
+        console.error("[load] 最后 5 行:", candleData.slice(-5));
+        console.error("[load] 首行:", candleData[0]);
+        throw e;
+        }
+
+        // ── URL center 参数 → 在 K 线上标记跳转日 ──
+        try {
+        const params = new URLSearchParams(location.search);
+        const centerParam = params.get("center");
+        const candleDates = new Set(candleData.map(d => d.time));
+        let markDate = null;
+
+        if (centerParam) {
+            for (let i = candleData.length - 1; i >= 0; i--) {
+            if (candleData[i].time <= centerParam) {
+                markDate = candleData[i].time;
+                break;
+            }
+            }
+        }
+
+        if (markDate && candleDates.has(markDate)) {
+            candleSeries.setMarkers([{
+            time: markDate,
+            position: "aboveBar",
+            color: "#ffb454",
+            shape: "arrowDown",
+            text: "跳转日",
+            }]);
+        } else {
+            candleSeries.setMarkers([]);
+        }
+        } catch (e) {
+        console.warn("[setMarkers] 失败", e);
+        try { candleSeries.setMarkers([]); } catch (_) {}
+        }
+        
+
+        applyOverlays();
+        applyPane("ind1", currentInd1Value);
+        applyPane("ind2", currentInd2Value);
+        applyPane("ind3", currentInd3Value);
+
+        chart.timeScale().fitContent();
+        setTimeout(drawNormLabels, 200);
+
+        const tag = dataSource === "stock" ? `${code}` : `行业:${industryName}`;
+        setStatus(`${tag} · ${rows.length} 个交易日 · ${rows[0].trade_date} ~ ${rows[rows.length - 1].trade_date}`);
+    } catch (e) {
+        console.error(e);
+        setStatus("错误：" + e.message, true);
+    } finally {
+        btn.disabled = false;
     }
-
-    applyOverlays();
-    applyPane("ind1", currentInd1Value);
-    applyPane("ind2", currentInd2Value);
-    applyPane("ind3", currentInd3Value);
-
-    chart.timeScale().fitContent();
-    setTimeout(drawNormLabels, 200);
-
-    const tag = dataSource === "stock" ? `${code}` : `行业:${industryName}`;
-    setStatus(`${tag} · ${rows.length} 个交易日 · ${rows[0].trade_date} ~ ${rows[rows.length - 1].trade_date}`);
-} catch (e) {
-    console.error(e);
-    setStatus("错误：" + e.message, true);
-} finally {
-    btn.disabled = false;
-}
+  } finally {
+    __loadInFlight = false;
+  }
 }
 
 function applyPane(paneKey, name) {

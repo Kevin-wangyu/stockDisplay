@@ -15,7 +15,10 @@ from datetime import date
 from trading_calendar import trading_days
 import duckdb
 import pandas as pd
-from config import QUOTE_DIR, INDUSTRY_DIR, CONCEPT_DIR, MAP_FILE, DATA_DIR, CONCEPT_DATE_DIR
+from config import (
+    QUOTE_DIR, INDUSTRY_DIR, CONCEPT_DIR, MAP_FILE, DATA_DIR, CONCEPT_DATE_DIR,
+    CONCEPT_PICKS_DIR, LIMIT_UP_STREAK_DIR, DAILY_PCT_DIR
+)
 from indicators import (
     SQL_INDICATORS,
     PYTHON_INDICATORS,
@@ -52,29 +55,41 @@ def _q_fetchall(sql: str, params=None):
         if params is not None:
             return _con.execute(sql, params).fetchall()
         return _con.execute(sql).fetchall()
-CONCEPT_PICKS_VERSION = "v2"    # 逻辑改动时递增，旧缓存自动失效
-CONCEPT_PICKS_DIR     = DATA_DIR / "concept_picks" / CONCEPT_PICKS_VERSION
-LIMIT_UP_STREAK_DIR = DATA_DIR / "limit_up_streak"
+# CONCEPT_PICKS_DIR / LIMIT_UP_STREAK_DIR 统一从 config 导入（单一真相来源）
 # 优先读合并目录；不存在时回退到原始分区目录
-COMPACT_ROOT = QUOTE_DIR.parent.parent / "data_compact"
-def _pick(compact: Path, raw: Path) -> Path:
-    return compact if compact.exists() and any(compact.rglob("*.parquet")) else raw
+COMPACT_ROOT = DATA_DIR.parent / "data_compact"
+# 辅助函数：如果 compact 目录存在，则生成合并查询的 Glob 数组
+BASE_DIR = QUOTE_DIR.parent.parent
 
-QUOTE_GLOB    = str(_pick(COMPACT_ROOT / "stock",    QUOTE_DIR)    / "**" / "*.parquet")
-INDUSTRY_GLOB = str(_pick(COMPACT_ROOT / "industry", INDUSTRY_DIR) / "**" / "*.parquet")
-CONCEPT_GLOB  = str(_pick(COMPACT_ROOT / "concept",  CONCEPT_DIR)  / "**" / "*.parquet")
+def _make_glob(kind: str) -> str:
+    compact_dir = BASE_DIR / "data_compact" / kind
+    data_dir = BASE_DIR / "data" / kind
+    
+    paths = []
+    if compact_dir.exists():
+        paths.append(str(compact_dir / "**" / "*.parquet").replace("\\", "/"))
+    if data_dir.exists():
+        paths.append(str(data_dir / "**" / "*.parquet").replace("\\", "/"))
+        
+    if not paths:
+        return "''"
+    if len(paths) == 1:
+        return f"'{paths[0]}'"  # 返回： 'D:/.../...'
+    
+    # 返回： ['D:/.../...', 'D:/.../...']
+    quoted_paths = [f"'{p}'" for p in paths]
+    return f"[{', '.join(quoted_paths)}]"
 
-# Parquet glob 路径
-QUOTE_GLOB = str(QUOTE_DIR / "**" / "*.parquet")
-INDUSTRY_GLOB = str(INDUSTRY_DIR / "**" / "*.parquet")
-CONCEPT_GLOB = str(CONCEPT_DIR / "**" / "*.parquet")
+# 这里的变量现在自带了单引号，或者是一个列表
+QUOTE_GLOB     = _make_glob("quote")
+INDUSTRY_GLOB  = _make_glob("industry_flow")
+CONCEPT_GLOB   = _make_glob("concept_flow")
+DAILY_PCT_GLOB = _make_glob("daily_pct")
+
+def _get_globs(data_dir: Path, sub_name: str) -> str:
+    return _make_glob(sub_name)
 
 # 基础列（分区列 trade_date 由 hive_partitioning 自动注入）
-STOCK_BASE_COLS = [
-    "trade_date", "code", "name", "pct_change", "industry",
-    "open", "high", "low", "close", "volume", "amount",
-    "huge_order_net", "big_order_net", "medium_order_net", "small_order_net",
-]
 SECTOR_BASE_COLS = [
     "trade_date", "code", "name", "pct_change",
     "open", "high", "low", "close", "volume", "amount",
@@ -97,23 +112,26 @@ from config import DATA_DIR
 MARKET_AMOUNT_FILE  = DATA_DIR / "market_amount.parquet"
 DAILY_PCT_FILE = DATA_DIR / "daily_pct.parquet"
 DAILY_PCT_DIR  = DATA_DIR / "daily_pct"
-DAILY_PCT_GLOB = str(DAILY_PCT_DIR / "**" / "*.parquet")
 CONCEPT_ALIAS_FILE  = DATA_DIR / "concept_alias.parquet"
-CONCEPT_PICKS_DIR   = DATA_DIR / "concept_picks"
-DAILY_PCT_DIR   = DATA_DIR / "daily_pct"
-DAILY_PCT_GLOB  = str(DAILY_PCT_DIR / "**" / "*.parquet")
 
 
 
 def _list_partition_dates(dir_path: Path) -> list[str]:
-    """扫描 hive 分区目录，返回所有 trade_date=YYYY-MM-DD 的日期（升序）。"""
+    """扫描原 data/ 目录（热数据区），只返回按日的分区（YYYY-MM-DD）。
+    
+    注意：合并后的历史数据在 data_compact/ 中格式为 YYYY，不参与日常日期遍历。
+    """
     if not dir_path.exists():
         return []
-    out = [
-        p.name.split("=", 1)[1]
-        for p in dir_path.iterdir()
-        if p.is_dir() and p.name.startswith("trade_date=")
-    ]
+    out = []
+    for p in dir_path.iterdir():
+        if not (p.is_dir() and p.name.startswith("trade_date=")):
+            continue
+        d_str = p.name.split("=", 1)[1]
+        # 只认 YYYY-MM-DD 格式，排除可能被误建的年目录
+        if len(d_str) == 10 and d_str[4] == "-":
+            if (p / "part.parquet").exists():
+                out.append(d_str)
     return sorted(out)
 
 
@@ -148,7 +166,7 @@ def rebuild_market_amount() -> int:
         r = _q_fetchone(
             f"""
             SELECT SUM(amount) AS total
-            FROM read_parquet('{INDUSTRY_GLOB}', hive_partitioning=true)
+            FROM read_parquet({INDUSTRY_GLOB}, hive_partitioning=true)
             WHERE trade_date = ?
             """,
             [d],
@@ -201,7 +219,7 @@ def rebuild_daily_pct(force_recent_days: int = 10) -> int:
     raw = _q_df(
         f"""
         SELECT code, trade_date, close
-        FROM read_parquet('{QUOTE_GLOB}', hive_partitioning=true,
+        FROM read_parquet({QUOTE_GLOB}, hive_partitioning=true,
                           union_by_name=true)
         WHERE trade_date IN ({ph})
         """, needed)
@@ -248,18 +266,19 @@ def rebuild_daily_pct(force_recent_days: int = 10) -> int:
                 len(todo), force_recent_days)
     return len(todo)
 def _list_daily_pct_dates() -> set[str]:
-    """扫描 daily_pct 分区目录，返回已有日期的集合。"""
+    """扫描 daily_pct 分区，只认含 part.parquet 的目录。"""
     if not DAILY_PCT_DIR.exists():
         return set()
-    return {
-        p.name.split("=", 1)[1]
-        for p in DAILY_PCT_DIR.iterdir()
-        if p.is_dir() and p.name.startswith("trade_date=")
-    }
+    out = set()
+    for p in DAILY_PCT_DIR.iterdir():
+        if not (p.is_dir() and p.name.startswith("trade_date=")):
+            continue
+        if not (p / "part.parquet").exists():
+            logger.debug("[daily_pct] 目录存在但缺 part.parquet: %s", p)
+            continue
+        out.add(p.name.split("=", 1)[1])
+    return out
 # ───────────────────────── 概念面板 API ─────────────────────────
-
-MARKET_AMOUNT_FILE = DATA_DIR / "market_amount.parquet"
-DAILY_PCT_FILE     = DATA_DIR / "daily_pct.parquet"
 
 # 涨停阈值（按代码前缀）
 def _limit_up_threshold(code: str) -> float:
@@ -320,6 +339,7 @@ def _compute_top_limit_up(base_df, trade_date, topn=10):
     sub = base_df[base_df["name"].isin(top_names)].copy()
     if sub.empty:
         return []
+    sub = sub.drop_duplicates(subset=["name"], keep="last")   # ← 新增
     sub["__order"] = sub["name"].map(name_order)
     sub = sub.sort_values("__order").drop(columns="__order")
     return _clean_concept_rows(sub)
@@ -329,35 +349,49 @@ def _load_alias_map():
     if not CONCEPT_ALIAS_FILE.exists():
         return {}
     df = _q_df(
-        f"SELECT cf_name, map_name FROM read_parquet('{CONCEPT_ALIAS_FILE}')"
+        f"SELECT cf_name, map_name FROM read_parquet({CONCEPT_ALIAS_FILE})"
     )
     return {r["cf_name"]: r["map_name"]
             for _, r in df.iterrows() if r["map_name"]}
 
+# 更新那些直接读文件的函数，确保能动态拼接路径
+def _find_file(sub_name: str, date_dir: str, filename: str) -> Path:
+    """优先在 compact 中找，找不到再去 data 中找"""
+    compact_p = COMPACT_ROOT / sub_name / date_dir / filename
+    if compact_p.exists():
+        return compact_p
+    data_p = DATA_DIR / sub_name / date_dir / filename
+    if data_p.exists():
+        return data_p
+    return data_p # 返回默认路径（让后续代码报错并触发重算）
 
 @lru_cache(maxsize=256)
 def _load_stock_index_by_date(trade_date: str):
-    """按日的概念成分索引（两段 pandas 合并，比 SQL unnest 快 3 倍）。"""
+    # 1. 热分区
     path = CONCEPT_DATE_DIR / f"trade_date={trade_date}" / "part.parquet"
-
-    # 情况 A：concept_date 有当日数据
+    
+    df = pd.DataFrame()
     if path.exists():
-        cd = pd.read_parquet(path, columns=["code", "concepts"])
-        # name 从 map 表批量取
+        df = pd.read_parquet(path, columns=["code", "concepts"])
+    else:
+        # 2. 冷年文件
+        year = trade_date[:4]
+        year_file = COMPACT_ROOT / "concept_date" / f"trade_date={year}" / "part.parquet"
+        if year_file.exists():
+            df = _q_df(f"SELECT code, concepts FROM read_parquet({year_file}) WHERE trade_date = ?", [trade_date])
+
+    if not df.empty:
         names = _q_df(f"SELECT code, name FROM read_parquet('{MAP_FILE}')")
         name_map = dict(zip(names["code"], names["name"]))
-
         code_info, cf2codes = {}, {}
-        for code, cs_str in zip(cd["code"], cd["concepts"]):
-            cs = frozenset(
-                c.strip() for c in str(cs_str or "").split(";") if c.strip()
-            )
+        for code, cs_str in zip(df["code"], df["concepts"]):
+            cs = frozenset(c.strip() for c in str(cs_str or "").split(";") if c.strip())
             code_info[code] = (name_map.get(code, ""), cs)
             for c in cs:
                 cf2codes.setdefault(c, []).append(code)
         return code_info, cf2codes
 
-    # 情况 B：fallback 快照 + alias 反向
+    # 3. fallback 快照 + alias 反向
     rev = _load_alias_reverse()
     stocks = _q_df(f"SELECT code, name, concepts FROM read_parquet('{MAP_FILE}')")
     code_info, cf2codes = {}, {}
@@ -377,7 +411,7 @@ def _load_alias_reverse():
     if not CONCEPT_ALIAS_FILE.exists():
         return {}
     df = _q_df(
-        f"SELECT cf_name, map_name FROM read_parquet('{CONCEPT_ALIAS_FILE}')"
+        f"SELECT cf_name, map_name FROM read_parquet({CONCEPT_ALIAS_FILE})"
     )
     return {r["map_name"]: r["cf_name"]
             for _, r in df.iterrows() if r["map_name"]}
@@ -385,22 +419,55 @@ def _load_alias_reverse():
 
 @lru_cache(maxsize=256)
 def _load_pct_today(trade_date: str):
-    """当日全市场 pct_change：读单日分区，5ms。"""
-    path = DAILY_PCT_DIR / f"trade_date={trade_date}" / "part.parquet"
-    if not path.exists():
-        # 兼容：老数据还在单文件里
-        if DAILY_PCT_FILE.exists():
-            df = pd.read_parquet(
-                DAILY_PCT_FILE, columns=["code", "trade_date", "pct_change"])
-            df["trade_date"] = df["trade_date"].astype(str).str.slice(0, 10)
-            df = df[df["trade_date"] == trade_date]
+    """当日全市场 pct_change：优先热分区，其次冷年文件，最后降级兜底。"""
+    # 1. 热数据（按日分区）
+    pdir = DAILY_PCT_DIR / f"trade_date={trade_date}"
+    path = pdir / "part.parquet"
+
+    if path.exists():
+        df = pd.read_parquet(path, columns=["code", "pct_change"])
+        return {r["code"]: float(r["pct_change"])
+                for _, r in df.iterrows() if pd.notna(r["pct_change"])}
+
+    # 2. 冷数据（按年合并）
+    year = trade_date[:4]
+    year_file = COMPACT_ROOT / "daily_pct" / f"trade_date={year}" / "part.parquet"
+    if year_file.exists():
+        # 用 DuckDB 查，速度极快，避免 pandas 读入整个大文件
+        df = _q_df(
+            f"SELECT code, pct_change FROM read_parquet({year_file}) WHERE trade_date = ?", 
+            [trade_date]
+        )
+        if not df.empty:
             return {r["code"]: float(r["pct_change"])
                     for _, r in df.iterrows() if pd.notna(r["pct_change"])}
-        return {}
 
-    df = pd.read_parquet(path, columns=["code", "pct_change"])
-    return {r["code"]: float(r["pct_change"])
-            for _, r in df.iterrows() if pd.notna(r["pct_change"])}
+    # 3. 降级：目录存在但 part 文件名不对 → glob 兜底
+    if pdir.exists():
+        alts = list(pdir.glob("*.parquet"))
+        if alts:
+            logger.warning(
+                "[daily_pct] %s part.parquet 缺失，使用 %s（建议重算）",
+                trade_date, alts[0].name,
+            )
+            df = pd.read_parquet(alts[0], columns=["code", "pct_change"])
+            return {r["code"]: float(r["pct_change"])
+                    for _, r in df.iterrows() if pd.notna(r["pct_change"])}
+
+    # 4. 最后兜底：走单文件
+    if DAILY_PCT_FILE.exists():
+        logger.warning(
+            "[daily_pct] %s 分区缺失，走单文件 fallback（口径可能不一致）",
+            trade_date,
+        )
+        df = pd.read_parquet(
+            DAILY_PCT_FILE, columns=["code", "trade_date", "pct_change"])
+        df["trade_date"] = df["trade_date"].astype(str).str.slice(0, 10)
+        df = df[df["trade_date"] == trade_date]
+        return {r["code"]: float(r["pct_change"])
+                for _, r in df.iterrows() if pd.notna(r["pct_change"])}
+                
+    return {}
 
 def _enrich_with_stocks(lists, trade_date):
     """三榜里每个概念附加 limit_up_count / top_stock（原地修改）。"""
@@ -426,26 +493,31 @@ def _enrich_with_stocks(lists, trade_date):
 # ───────────────────────── 交集榜单 Parquet 缓存 ─────────────────────────
 
 def _picks_cache_path(trade_date: str) -> Path:
-    return CONCEPT_PICKS_DIR / f"trade_date={trade_date}" / "part.parquet"
+    return _find_file("concept_picks", f"trade_date={trade_date}", "part.parquet")
 
 
 def _load_cached_picks(trade_date: str) -> list[dict] | None:
     """命中返回 records；未命中返回 None。"""
-    p = _picks_cache_path(trade_date)
-    if not p.exists():
-        return None
-    try:
+    p = CONCEPT_PICKS_DIR / f"trade_date={trade_date}" / "part.parquet"
+    df = None
+    
+    if p.exists():
         df = pd.read_parquet(p)
-        # matched_concepts 存的是分号串，读回来 split
-        if "matched_concepts" in df.columns:
-            df["matched_concepts"] = df["matched_concepts"].fillna("").apply(
-                lambda s: [x for x in str(s).split(";") if x]
-            )
-        return df.to_dict(orient="records")
-    except Exception:
-        logger.exception("读取 concept_picks 缓存失败 %s", trade_date)
-        return None
+    else:
+        # 查冷年文件
+        year = trade_date[:4]
+        year_file = COMPACT_ROOT / "concept_picks" / f"trade_date={year}" / "part.parquet"
+        if year_file.exists():
+            df = _q_df(f"SELECT * FROM read_parquet({year_file}) WHERE trade_date = ?", [trade_date])
 
+    if df is None or df.empty:
+        return None
+        
+    if "matched_concepts" in df.columns:
+        df["matched_concepts"] = df["matched_concepts"].fillna("").apply(
+            lambda s: [x for x in str(s).split(";") if x]
+        )
+    return df.to_dict(orient="records")
 
 def _save_picks_cache(trade_date: str, picks: list[dict]) -> None:
     if not picks:
@@ -492,7 +564,7 @@ def _get_tops_and_scores(trade_date: str):
     base = _q_df(
         f"""
         SELECT code, name, amount, turnover_rate, total_market_cap, pct_change
-        FROM read_parquet('{CONCEPT_GLOB}', hive_partitioning=true)
+        FROM read_parquet({CONCEPT_GLOB}, hive_partitioning=true)
         WHERE trade_date = ?
         """, [trade_date])
     if base.empty:
@@ -620,7 +692,7 @@ def _build_intersection_picks(top_amount, top_pct, top_limit_up,
         f"""
         SELECT code, close, pct_change, turnover_rate, hot_rank, amount,
                huge_order_net, big_order_net, medium_order_net, small_order_net
-        FROM read_parquet('{QUOTE_GLOB}', hive_partitioning=true,
+        FROM read_parquet({QUOTE_GLOB}, hive_partitioning=true,
                           union_by_name=true)
         WHERE trade_date = ? AND code IN ({ph})
         """, [trade_date, *codes])
@@ -644,7 +716,7 @@ def _build_intersection_picks(top_amount, top_pct, top_limit_up,
         fdf = _q_df(
             f"""
             SELECT code, trade_date, close
-            FROM read_parquet('{QUOTE_GLOB}', hive_partitioning=true,
+            FROM read_parquet({QUOTE_GLOB}, hive_partitioning=true,
                               union_by_name=true)
             WHERE trade_date IN ({ph2}) AND code IN ({ph})
             """, [*date_list, *codes])
@@ -736,7 +808,7 @@ def get_concept_date_top10(trade_date: str) -> dict:
         "top_pct":      top_pct,
         "top_limit_up": top_limit_up,
         "intersection_picks": picks,
-        "picks_cached": picks is not None and len(picks) > 0,
+        "picks_cached": bool(picks),
     }
 
 # ───────────────────────── 内部工具 ─────────────────────────
@@ -792,7 +864,7 @@ def _query_chart(
     sql = f"""
     SELECT
         {cols}
-    FROM read_parquet('{glob}', hive_partitioning=true, union_by_name=true)
+    FROM read_parquet({glob}, hive_partitioning=true, union_by_name=true)
     WHERE {key_col} = ?
       AND trade_date BETWEEN ? AND ?
     ORDER BY trade_date
@@ -804,6 +876,26 @@ def _query_chart(
     for name in py_names:
         df = PYTHON_INDICATORS[name]["func"](df)
 
+    # ── 过滤掉 OHLC 不全 / 非正 / 日期异常的行 ──
+    # ── 强制清洗：日期标准化 + OHLC 有效 + 去重排序 ──
+    if "trade_date" in df.columns and not df.empty:
+        df["trade_date"] = (
+            pd.to_datetime(df["trade_date"], errors="coerce")
+              .dt.strftime("%Y-%m-%d")
+        )
+        df = df[df["trade_date"].notna()]
+
+    for c in ("open", "high", "low", "close"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+            # 只保留 4 个值都有效 且 > 0 的行
+            df = df[df[c].notna() & (df[c] > 0)]
+
+    if "trade_date" in df.columns:
+        df = (df.sort_values("trade_date")
+                .drop_duplicates(subset=["trade_date"], keep="last")
+                .reset_index(drop=True))
+
     return df
 
 
@@ -813,7 +905,7 @@ def list_codes() -> pd.DataFrame:
     """所有股票代码 + 名称。"""
     sql = f"""
     SELECT code, ANY_VALUE(name) AS name
-    FROM read_parquet('{QUOTE_GLOB}', hive_partitioning=true, union_by_name=true)
+    FROM read_parquet({QUOTE_GLOB}, hive_partitioning=true, union_by_name=true)
     GROUP BY code
     ORDER BY code
     """
@@ -944,7 +1036,7 @@ def get_stock_industry_chart(
     sql = f"""
     SELECT
         {cols}
-    FROM read_parquet('{INDUSTRY_GLOB}', hive_partitioning=true, union_by_name=true)
+    FROM read_parquet({INDUSTRY_GLOB}, hive_partitioning=true, union_by_name=true)
     WHERE code = ?
       AND trade_date BETWEEN ? AND ?
     ORDER BY trade_date
@@ -992,7 +1084,7 @@ def get_missing_trading_days(
     df = _q_df(
         f"""
         SELECT DISTINCT trade_date
-        FROM read_parquet('{glob}', hive_partitioning=true)
+        FROM read_parquet({glob}, hive_partitioning=true)
         WHERE code = ? AND trade_date BETWEEN ? AND ?
         """,
         [code, str(start), str(end)],
@@ -1027,7 +1119,7 @@ def get_stock_date_range(code: str) -> dict:
     row = _q_fetchone(
         f"""
         SELECT MIN(trade_date) AS min_d, MAX(trade_date) AS max_d
-        FROM read_parquet('{QUOTE_GLOB}', hive_partitioning=true)
+        FROM read_parquet({QUOTE_GLOB}, hive_partitioning=true)
         WHERE code = ?
         """,
         [code],
@@ -1063,7 +1155,7 @@ def get_concept_panel(code: str, trade_date: str, days: int = 120) -> dict:
     name_df = _q_df(
         f"""
         SELECT DISTINCT code, name
-        FROM read_parquet('{CONCEPT_GLOB}', hive_partitioning=true)
+        FROM read_parquet({CONCEPT_GLOB}, hive_partitioning=true)
         WHERE name IN ({ph})
         """,
         concept_names,
@@ -1079,7 +1171,7 @@ def get_concept_panel(code: str, trade_date: str, days: int = 120) -> dict:
     bars_df = _q_df(
         f"""
         SELECT code, name, amount, turnover_rate
-        FROM read_parquet('{CONCEPT_GLOB}', hive_partitioning=true)
+        FROM read_parquet({CONCEPT_GLOB}, hive_partitioning=true)
         WHERE trade_date = ? AND code IN ({ph2})
         """,
         [trade_date, *concept_codes],
@@ -1090,7 +1182,7 @@ def get_concept_panel(code: str, trade_date: str, days: int = 120) -> dict:
     if bars_df.empty:
         fallback = _q_fetchone(
             f"""
-            SELECT MAX(trade_date) FROM read_parquet('{CONCEPT_GLOB}', hive_partitioning=true)
+            SELECT MAX(trade_date) FROM read_parquet({CONCEPT_GLOB}, hive_partitioning=true)
             WHERE trade_date <= ? AND code IN ({ph2})
             """,
             [trade_date, *concept_codes],
@@ -1105,7 +1197,7 @@ def get_concept_panel(code: str, trade_date: str, days: int = 120) -> dict:
         bars_df = _q_df(
             f"""
             SELECT code, name, amount, turnover_rate
-            FROM read_parquet('{CONCEPT_GLOB}', hive_partitioning=true)
+            FROM read_parquet({CONCEPT_GLOB}, hive_partitioning=true)
             WHERE trade_date = ? AND code IN ({ph2})
             """,
             [actual_trade_date, *concept_codes],
@@ -1131,7 +1223,7 @@ def get_concept_panel(code: str, trade_date: str, days: int = 120) -> dict:
     market_df = _q_df(
         f"""
         SELECT code, name, amount, turnover_rate
-        FROM read_parquet('{CONCEPT_GLOB}', hive_partitioning=true)
+        FROM read_parquet({CONCEPT_GLOB}, hive_partitioning=true)
         WHERE trade_date = ?
         ORDER BY amount DESC NULLS LAST
         LIMIT 15
@@ -1155,7 +1247,7 @@ def get_concept_panel(code: str, trade_date: str, days: int = 120) -> dict:
     date_df = _q_df(
         f"""
         SELECT DISTINCT trade_date
-        FROM read_parquet('{CONCEPT_GLOB}', hive_partitioning=true)
+        FROM read_parquet({CONCEPT_GLOB}, hive_partitioning=true)
         WHERE code IN ({ph2}) AND trade_date <= ?
         ORDER BY trade_date DESC
         LIMIT ?
@@ -1181,7 +1273,7 @@ def get_concept_panel(code: str, trade_date: str, days: int = 120) -> dict:
         f"""
         SELECT code, trade_date, amount, turnover_rate,
                huge_order_net, big_order_net, medium_order_net, small_order_net
-        FROM read_parquet('{CONCEPT_GLOB}', hive_partitioning=true)
+        FROM read_parquet({CONCEPT_GLOB}, hive_partitioning=true)
         WHERE code IN ({ph2}) AND trade_date BETWEEN ? AND ?
         ORDER BY code, trade_date
         """,
@@ -1207,16 +1299,7 @@ def get_concept_panel(code: str, trade_date: str, days: int = 120) -> dict:
             "medium_order_net": _col("medium_order_net"),
             "small_order_net": _col("small_order_net"),
         }
-    # 交叉选股逻辑
-    market_top = [
-        {
-            "code": r["code"],
-            "name": r["name"],
-            "amount": _fnum(r["amount"]),
-            "turnover_rate": _fnum(r["turnover_rate"]),
-        }
-        for _, r in market_df.iterrows()
-    ]
+
     # 3.6 概念交叉选股：按 TOP5 / TOP10 概念匹配数选股
     stocks_df = _q_df(
         f"SELECT code, name, concepts FROM read_parquet('{MAP_FILE}')"
@@ -1250,43 +1333,22 @@ def get_concept_panel(code: str, trade_date: str, days: int = 120) -> dict:
         "top5":  _pick_for_n(5),
         "top10": _pick_for_n(10),
     }
-    if date_df.empty:
-        return {
-            "trade_date": actual_trade_date,
-            "bars": bars,
-            "market_top": market_top,
-            "stock_picks": stock_picks,   # ← 新增
-            "series": {"dates": [], "concepts": {}},
-        }
     return {
         "trade_date": actual_trade_date,
         "bars": bars,
         "market_top": market_top,
-        "stock_picks": stock_picks,   # ← 新增
+        "stock_picks": stock_picks,
         "series": {"dates": all_dates, "concepts": series_concepts},
     }
 
 # ───────────────────────── 概念面板 API ─────────────────────────
-
-MARKET_AMOUNT_FILE  = DATA_DIR / "market_amount.parquet"
-DAILY_PCT_FILE      = DATA_DIR / "daily_pct.parquet"
-CONCEPT_ALIAS_FILE  = DATA_DIR / "concept_alias.parquet"
-
-
-def _limit_up_threshold(code: str) -> float:
-    """按板块返回涨停阈值（%）。"""
-    p = str(code)[:2]
-    if p in ("30", "68"):       return 19.8
-    if p in ("8", "4", "92"):   return 29.8
-    return 9.8
-
 
 def _resolve_map_name(cf_name: str) -> str | None:
     """把 concept_flow 的概念名翻译成 stock_sector_map 里的概念名。"""
     if not CONCEPT_ALIAS_FILE.exists():
         return cf_name  # 别名表没建好时降级为原样匹配
     row = _q_fetchone(
-        f"SELECT map_name FROM read_parquet('{CONCEPT_ALIAS_FILE}') "
+        f"SELECT map_name FROM read_parquet({CONCEPT_ALIAS_FILE}) "
         f"WHERE cf_name = ?", [cf_name]
     )
     return row[0] if row and row[0] else None
@@ -1300,7 +1362,7 @@ def get_concept_limit_up_stocks(
     """
     # 1. concept_code → cf_name
     row = _q_fetchone(
-        f"SELECT name FROM read_parquet('{CONCEPT_GLOB}', hive_partitioning=true) "
+        f"SELECT name FROM read_parquet({CONCEPT_GLOB}, hive_partitioning=true) "
         f"WHERE code = ? LIMIT 1", [concept_code]
     )
     if not row:
@@ -1338,7 +1400,7 @@ def get_concept_limit_up_stocks(
     pct_rows = _q_df(
         f"""
         SELECT code, trade_date, pct_change
-        FROM read_parquet('{DAILY_PCT_FILE}')
+        FROM read_parquet({DAILY_PCT_GLOB}, hive_partitioning=true)
         WHERE code IN ({ph}) AND trade_date BETWEEN ? AND ?
         """, [*codes, window_start, window_end]
     )
@@ -1369,14 +1431,14 @@ def get_concept_limit_up_stocks(
         f"""
         SELECT code, close, pct_change, turnover_rate, hot_rank, amount,
                huge_order_net, big_order_net, medium_order_net, small_order_net
-        FROM read_parquet('{QUOTE_GLOB}', hive_partitioning=true, union_by_name=true)
+        FROM read_parquet({QUOTE_GLOB}, hive_partitioning=true, union_by_name=true)
         WHERE trade_date = ? AND code IN ({ph2})
         """, [trade_date, *hit_codes]
     )
     qmap = {r["code"]: r for _, r in quote_df.iterrows()}
 
     name_df = _q_df(
-        f"SELECT code, name FROM read_parquet('{MAP_FILE}') WHERE code IN ({ph2})",
+        f"SELECT code, name FROM read_parquet({MAP_FILE}) WHERE code IN ({ph2})",
         hit_codes,
     )
     name_by_code = dict(zip(name_df["code"], name_df["name"]))
@@ -1569,7 +1631,7 @@ def rebuild_limit_up_streak(force: bool = False, limit_days: int = 200,
     ph = ",".join(["?"] * len(buffered))
     dp_df = _q_df(
         f"SELECT code, trade_date, pct_change "
-        f"FROM read_parquet('{DAILY_PCT_GLOB}', hive_partitioning=true) "
+        f"FROM read_parquet({DAILY_PCT_GLOB}, hive_partitioning=true) "
         f"WHERE trade_date IN ({ph})", buffered)
     logger.info("[limit_up_streak] 读 daily_pct 耗时 %.2fs（%d 行）",
                 time.time() - t1, len(dp_df))
@@ -1598,7 +1660,7 @@ def _rebuild_streak_for_date(trade_date: str) -> None:
     ph = ",".join(["?"] * len(buffered))
     dp_df = _q_df(
         f"SELECT code, trade_date, pct_change "
-        f"FROM read_parquet('{DAILY_PCT_GLOB}', hive_partitioning=true) "
+        f"FROM read_parquet({DAILY_PCT_GLOB}, hive_partitioning=true) "
         f"WHERE trade_date IN ({ph})", buffered)
     long_df = _vectorized_streak(dp_df, buffered)
     _write_streak_partitions(long_df, [trade_date])
@@ -1611,21 +1673,22 @@ def _rebuild_streak_for_date(trade_date: str) -> None:
 
 @lru_cache(maxsize=32)
 def get_limit_up_ladder(trade_date: str, min_days: int = 2) -> dict:
-    """涨停天梯榜：cache miss 时只算单日（< 0.5s），不跑全量。"""
+    # 1. 热分区
     cache_path = LIMIT_UP_STREAK_DIR / f"trade_date={trade_date}" / "part.parquet"
-    if not cache_path.exists():
-        # 未预计算 → 返回空，前端提示
-        return {
-            "trade_date": trade_date,
-            "stocks": [],
-            "cached": False,
-            "hint": "该日期未预计算，请运行 precompute.py",
-        }
-
-    try:
+    df = pd.DataFrame()
+    
+    if cache_path.exists():
         df = pd.read_parquet(cache_path)
-    except Exception:
-        return {"trade_date": trade_date, "stocks": []}
+    else:
+        # 2. 冷年文件
+        year = trade_date[:4]
+        year_file = COMPACT_ROOT / "limit_up_streak" / f"trade_date={year}" / "part.parquet"
+        if year_file.exists():
+            df = _q_df(f"SELECT code, streak_days FROM read_parquet({year_file}) WHERE trade_date = ?", [trade_date])
+            
+    if df.empty:
+        return {"trade_date": trade_date, "stocks": [], "cached": False,
+                "hint": "该日期未预计算，请运行 precompute.py"}
 
     df = df[df["streak_days"] >= min_days]
     if df.empty:
@@ -1654,7 +1717,7 @@ def get_limit_up_ladder(trade_date: str, min_days: int = 2) -> dict:
         f"""
         SELECT code, close, turnover_rate, hot_rank, amount,
                huge_order_net, big_order_net, medium_order_net, small_order_net
-        FROM read_parquet('{QUOTE_GLOB}', hive_partitioning=true,
+        FROM read_parquet({QUOTE_GLOB}, hive_partitioning=true,
                           union_by_name=true)
         WHERE trade_date = ? AND code IN ({ph})
         """, [trade_date, *codes])
@@ -1680,7 +1743,7 @@ def get_limit_up_ladder(trade_date: str, min_days: int = 2) -> dict:
         fdf = _q_df(
             f"""
             SELECT code, trade_date, close
-            FROM read_parquet('{QUOTE_GLOB}', hive_partitioning=true,
+            FROM read_parquet({QUOTE_GLOB}, hive_partitioning=true,
                               union_by_name=true)
             WHERE trade_date IN ({ph2}) AND code IN ({ph})
             """, [*date_list, *codes])
@@ -1774,7 +1837,7 @@ def get_trading_days_around(center: str, before: int = 400, after: int = 0) -> d
     row = _q_fetchone(
         f"""
         SELECT MIN(trade_date) AS min_d, MAX(trade_date) AS max_d
-        FROM read_parquet('{QUOTE_GLOB}', hive_partitioning=true)
+        FROM read_parquet({QUOTE_GLOB}, hive_partitioning=true)
         """
     )
     if not row or not row[0]:

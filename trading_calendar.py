@@ -38,10 +38,16 @@ def _fetch_and_cache() -> pd.Series:
         logger.exception("akshare 拉取交易日历失败")
         return pd.Series(dtype="datetime64[ns]")
 
+# 手动缓存：空结果不缓存，避免一次网络失败导致整个进程永久退化
+_CAL_CACHE: pd.Series | None = None
 
-@lru_cache(maxsize=1)
+
 def _load_calendar() -> pd.Series:
-    """优先读本地缓存；缓存不存在或损坏则联网拉取。"""
+    """优先读本地缓存；缓存不存在或损坏则联网拉取。空结果不缓存，下次调用会重试。"""
+    global _CAL_CACHE
+    if _CAL_CACHE is not None:
+        return _CAL_CACHE
+
     if _CACHE_FILE.exists():
         try:
             df = pd.read_parquet(_CACHE_FILE)
@@ -50,10 +56,24 @@ def _load_calendar() -> pd.Series:
                 "交易日历读取缓存：%d 条，范围 %s ~ %s",
                 len(s), s.iloc[0].date(), s.iloc[-1].date(),
             )
+            _CAL_CACHE = s
             return s
         except Exception:
             logger.exception("读取交易日历缓存失败，尝试重新拉取")
-    return _fetch_and_cache()
+
+    s = _fetch_and_cache()
+    if not s.empty:
+        _CAL_CACHE = s
+    else:
+        logger.warning("交易日历拉取失败（空结果），本次不缓存，下次调用将重试")
+    return s
+
+
+def refresh() -> None:
+    """强制重新联网拉取（比如每年更新）。"""
+    global _CAL_CACHE
+    _CAL_CACHE = None
+    _fetch_and_cache()
 
 
 def trading_days(start: date, end: date) -> list[date]:

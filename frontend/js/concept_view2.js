@@ -359,15 +359,27 @@ function v2SetPane(paneKey, name) {
     visible: false,
   });
 
-  const data = v2State.rows.map(r => {
+  // ── 标准化 + 去重 ──
+  const _normPane = (r) => {
+    const time = String(r.trade_date ?? "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(time)) return null;
     const v = r[name];
-    if (v == null) return null;
+    if (v == null || !Number.isFinite(Number(v))) return null;
+    const val = Number(v);
     if (isHist) {
-      return { time: r.trade_date, value: v,
-               color: v >= 0 ? COLORS.up : COLORS.down };
+      return { time, value: val,
+               color: val >= 0 ? COLORS.up : COLORS.down };
     }
-    return { time: r.trade_date, value: v };
-  }).filter(Boolean);
+    return { time, value: val };
+  };
+
+  const map = new Map();
+  v2State.rows.forEach(r => {
+    const item = _normPane(r);
+    if (item) map.set(item.time, item);
+  });
+  const data = Array.from(map.values()).sort((a, b) =>
+    a.time < b.time ? -1 : a.time > b.time ? 1 : 0);
 
   series.setData(data);
   ref.series = series;
@@ -409,11 +421,66 @@ async function v2LoadStock(code, name) {
       v2SetStatus("");
       return;
     }
+    // ── DEBUG：打印实际传给 setData 的数据 ──
+    {
+      const sample = v2State.rows.slice(0, 3).map(r => ({
+        time: r.trade_date, timeType: typeof r.trade_date,
+        open: r.open, openType: typeof r.open,
+        high: r.high, highType: typeof r.high,
+        low: r.low, lowType: typeof r.low,
+        close: r.close, closeType: typeof r.close,
+      }));
+      console.log("[DBG] 前 3 行原始:", sample);
 
-    v2State.candle.setData(v2State.rows.map(r => ({
-      time: r.trade_date, open: r.open, high: r.high,
-      low: r.low, close: r.close,
-    })));
+      const badTime = v2State.rows.filter(r => {
+        const t = r.trade_date;
+        if (t == null) return true;
+        const s = String(t).slice(0, 10);
+        return !/^\d{4}-\d{2}-\d{2}$/.test(s);
+      });
+      console.log("[DBG] trade_date 格式异常行数:", badTime.length);
+      if (badTime.length) console.log("[DBG] 异常样例:", badTime.slice(0, 5));
+
+      const dups = {};
+      v2State.rows.forEach(r => {
+        const k = String(r.trade_date).slice(0, 10);
+        dups[k] = (dups[k] || 0) + 1;
+      });
+      const dupKeys = Object.entries(dups).filter(([_, n]) => n > 1);
+      console.log("[DBG] 重复 trade_date 数:", dupKeys.length);
+      if (dupKeys.length) console.log("[DBG] 重复样例:", dupKeys.slice(0, 5));
+    }
+
+    // ── 标准化 + 去重 + 排序 ──
+    const _norm = (r) => {
+      const time = String(r.trade_date ?? "").slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(time)) return null;
+      const o = Number(r.open), h = Number(r.high);
+      const l = Number(r.low),  c = Number(r.close);
+      if (![o, h, l, c].every(Number.isFinite)) return null;
+      return { time, open: o, high: h, low: l, close: c };
+    };
+
+    const _dedup = (arr) => {
+      const map = new Map();
+      for (const item of arr) {
+        map.set(item.time, item);   // 相同 time 保留最后一个
+      }
+      return Array.from(map.values()).sort((a, b) =>
+        a.time < b.time ? -1 : a.time > b.time ? 1 : 0);
+    };
+
+    const candleData = _dedup(
+      v2State.rows.map(_norm).filter(Boolean)
+    );
+
+    if (!candleData.length) {
+      v2El.title.textContent = `${code} ${name} · 无有效 K 线数据`;
+      v2SetStatus("");
+      return;
+    }
+
+    v2State.candle.setData(candleData);
 
     // ── 查询日期标记 ──
     const queryDate = v2El.dateInput.value;
@@ -426,17 +493,22 @@ async function v2LoadStock(code, name) {
           break;
         }
       }
-      if (markDate) {
-        v2State.candle.setMarkers([{
-          time: markDate,
-          position: "aboveBar",
-          color: "#ffb454",
-          shape: "arrowDown",
-          text: "查询日",
-          size: 1.5,
-        }]);
-      } else {
-        v2State.candle.setMarkers([]);
+      try {
+        if (markDate) {
+          v2State.candle.setMarkers([{
+            time: markDate,
+            position: "aboveBar",
+            color: "#ffb454",
+            shape: "arrowDown",
+            text: "查询日",
+            size: 1.5,
+          }]);
+        } else {
+          v2State.candle.setMarkers([]);
+        }
+      } catch (e) {
+        console.warn("[setMarkers] 失败，已回退", e);
+        try { v2State.candle.setMarkers([]); } catch (_) {}
       }
     } else {
       v2State.candle.setMarkers([]);
@@ -675,7 +747,6 @@ async function v2Query() {
 
     v2El.sidebarHead.textContent =
       `${data.concept_name} · 近10交易日涨停股 ${data.stocks.length} 只`;
-    v2RenderStockList(data.stocks);
 
     v2State.allStocks  = data.stocks || [];
     v2State.conceptName = data.concept_name || "";
@@ -685,7 +756,8 @@ async function v2Query() {
     v2RenderFilteredList();
 
     // 自动选中第一只（过滤后）
-    const first = v2El.stockList.querySelector(".v2-stock-item");
+    const first = v2El.stockList.querySelector(
+      ".v2-stock-item, .v2-stock-row");
     if (first) {
       first.classList.add("active");
       await v2LoadStock(first.dataset.code, first.dataset.name);

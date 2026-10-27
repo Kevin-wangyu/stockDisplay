@@ -1,0 +1,6 @@
+data/
+logs/
+raw_data/
+map/
+*.bak
+*backup*

@@ -29,6 +29,7 @@ import pandas as pd
 sys.path.append(str(Path(__file__).parent.parent))
 
 from config import (
+    DATA_DIR, 
     RAW_QUOTE_DIR, RAW_INDUSTRY_DIR, RAW_CONCEPT_DIR, RAW_STOCK_CONCEPT_DIR,
     QUOTE_DIR, INDUSTRY_DIR, CONCEPT_DIR, CONCEPT_DATE_DIR, RAW_AMO_DIR, AMO_DIR,
     MAP_FILE, MAP_RAW_FILE,
@@ -47,6 +48,52 @@ from etl.field_mapping import (
 
 logger = logging.getLogger("daily_update")
 
+import duckdb
+from functools import lru_cache
+from config import DATA_DIR
+
+# 定位冷数据目录
+_COMPACT_DIR = DATA_DIR.parent / "data_compact"
+
+# 直接用 kind 字符串映射，绝不用绝对路径匹配（跨平台/跨环境最稳）
+_COMPACT_KIND_MAP = {
+    "stock": "quote",
+    "industry": "industry_flow",
+    "concept": "concept_flow",
+    "stock_concept": "concept_date",
+    "amo_components": "amo_components"
+}
+
+@lru_cache(maxsize=32)
+def _get_compact_dates(sub_name: str, year: int) -> set[str]:
+    """读取合并文件日期，不依赖任何时间库转换，直接硬切字符串。"""
+    year_file = _COMPACT_DIR / sub_name / f"trade_date={year}" / "part.parquet"
+    if not year_file.exists():
+        return set()
+    try:
+        con = duckdb.connect()
+        df = con.execute(
+            f"SELECT DISTINCT trade_date FROM read_parquet('{year_file}')"
+        ).df()
+        
+        if df.empty:
+            return set()
+            
+        res = set()
+        # 无论它是 BIGINT(20240201)、DATE(2024-02-01) 还是带时间的字符串
+        for val in df["trade_date"]:
+            if val is None:
+                continue
+            # 去掉时间部分，去掉横杠，变成纯数字字符串
+            s = str(val).split(" ")[0].split("T")[0].replace("-", "")
+            # 如果长度够 8 位且前 8 位是数字，直接拼接
+            if len(s) >= 8 and s[:8].isdigit():
+                res.add(f"{s[:4]}-{s[4:6]}-{s[6:8]}")
+        return res
+        
+    except Exception as e:
+        logger.warning("读取合并文件 %s 失败: %s", year_file, e)
+        return set()
 
 # ───────────────────────── 类型规格 ─────────────────────────
 
@@ -62,8 +109,20 @@ KINDS = ["amo_components","stock", "industry", "concept", "stock_concept"]
 
 # ───────────────────────── 工具 ─────────────────────────
 
-def partition_exists(out_dir: Path, trade_date: date) -> bool:
-    return (out_dir / f"trade_date={trade_date}" / "part.parquet").exists()
+def partition_exists(out_dir: Path, trade_date: date, kind: str) -> bool:
+    """检查该日期的数据是否已经存在（热分区或冷年文件）。"""
+    # 1. 查热数据（按日分区）
+    if (out_dir / f"trade_date={trade_date}" / "part.parquet").exists():
+        return True
+        
+    # 2. 查冷数据（只要该年份的文件存在，就认为这一年的数据都有了）
+    sub_name = _COMPACT_KIND_MAP.get(kind)
+    if sub_name:
+        year_file = _COMPACT_DIR / sub_name / f"trade_date={trade_date.year}" / "part.parquet"
+        if year_file.exists():
+            return True
+            
+    return False
 
 
 def parse_date_arg(s: str) -> date:
@@ -110,7 +169,7 @@ def process_type(kind: str, target_date: date | None, force: bool) -> dict:
             continue
 
         # 3. 幂等检查
-        if not force and partition_exists(out_dir, trade_date):
+        if not force and partition_exists(out_dir, trade_date, kind):
             logger.debug("[%s] 已存在，跳过: %s (%s)", kind, fn.name, trade_date)
             stats["skipped"].append((fn.name, trade_date))
             continue
