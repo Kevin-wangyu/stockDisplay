@@ -1,0 +1,29 @@
+# 大文件夹
+data/
+raw_data/
+backup/
+xdget*/
+
+#不想git的文件
+抓取tdx历史概念/
+askai/
+PROJECT/
+xdget_xlsx*
+test*
+*.log
+*.zip
+*.7z
+
+# 系统/编辑器缓存
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.tmp/
+
+# 依赖目录
+node_modules/
+__pycache__/
+*.pyc
+
+

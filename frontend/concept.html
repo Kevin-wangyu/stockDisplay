@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>概念板块分析 · 涨停股追踪</title>
+  <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/concept.css">
+  <link rel="icon" href="data:,">
+</head>
+<body>
+  <div id="toolbar">
+    <div class="toolbar-row">
+      <span class="tab-group">
+        <button class="tab-btn active" data-tab="view1">TOP10 榜单</button>
+        <button class="tab-btn" data-tab="view2">概念涨停股</button>
+      </span>
+
+      <span id="view1DateGroup">
+        <button id="v1PrevDay" class="day-nav-btn" title="上一交易日">‹</button>
+        <label>日期</label>
+        <input id="v1Date" type="date">
+        <button id="v1NextDay" class="day-nav-btn" title="下一交易日">›</button>
+      </span>
+
+      <span id="view2FilterGroup" style="display:none">
+        <label>概念代码</label>
+        <input id="v2Code" size="10" placeholder="880xxx">
+        <label>查询日期</label>
+        <button id="v2PrevDay" class="day-nav-btn" title="上一交易日">‹</button>
+        <input id="v2Date" type="date">
+        <button id="v2NextDay" class="day-nav-btn" title="下一交易日">›</button>
+        <label>K线</label>
+        <input id="v2Start" type="date">
+        <span style="color:var(--text-dim)">~</span>
+        <input id="v2End" type="date">
+        <button id="v2Query">查询</button>
+        <button id="v2Fit" title="缩放至显示全部数据">适屏</button>
+      </span>
+      <span id="v1MarketInline">
+        <span class="v1-market-label">市场总成交额</span>
+        <span class="v1-market-value" id="v1MarketTotal">-</span>
+      </span>
+      <span id="v1MarketInline">
+        <span class="v1-market-label">5日均</span>
+        <span class="v1-market-value" id="v1Avg5d">-</span>
+        <span class="v1-market-label" style="margin-left:8px">20日均</span>
+        <span class="v1-market-value" id="v1Avg20d">-</span>
+      </span>
+
+      <span id="status"></span>
+    </div>
+
+    <div class="toolbar-row" id="view2IndicatorRow" style="display:none">
+      <label>指标1</label>
+      <div class="cascade-dd" id="v2IndDd1">
+        <button class="dd-trigger" type="button">
+          <span class="dd-label">1日超大单净额</span>
+          <span class="dd-arrow">▾</span>
+        </button>
+        <div class="dd-panel"></div>
+      </div>
+
+      <label>指标2</label>
+      <div class="cascade-dd" id="v2IndDd2">
+        <button class="dd-trigger" type="button">
+          <span class="dd-label">1日中单净额</span>
+          <span class="dd-arrow">▾</span>
+        </button>
+        <div class="dd-panel"></div>
+      </div>
+
+      <label>指标3</label>
+      <div class="cascade-dd" id="v2IndDd3">
+        <button class="dd-trigger" type="button">
+          <span class="dd-label">1日小单净额</span>
+          <span class="dd-arrow">▾</span>
+        </button>
+        <div class="dd-panel"></div>
+      </div>
+
+      <label style="margin-left:12px">标注阈值</label>
+      <input id="v2NormThreshold" type="number" step="0.05" min="0"
+            value="1.00" style="width:80px">
+    </div>
+  </div>
+
+<div id="view1" class="view-panel active">
+  <div class="v1-tops">
+    <div class="v1-col">
+      <div class="cb-header">成交额 TOP10</div>
+      <div id="v1AmountList" class="v1-list"></div>
+    </div>
+    <div class="v1-col">
+      <div class="cb-header">涨跌幅 TOP10</div>
+      <div id="v1PctList" class="v1-list"></div>
+    </div>
+    <div class="v1-col">
+      <div class="cb-header">涨停数 TOP10</div>
+      <div id="v1LimitUpList" class="v1-list"></div>
+    </div>
+  </div>
+
+  <div class="v1-picks-panel">
+    <div class="v1-split-panel">
+      <div class="v1-ladder-col">
+        <div class="cb-header">涨停天梯榜 · 二板及以上</div>
+        <div class="v1-ladder-table">
+          <div id="v1LadderList" class="v1-ladder-list"></div>
+        </div>
+      </div>
+      <div class="v1-splitter-v" id="v1Splitter" title="拖动调整左右宽度"></div>    
+      <div class="v1-picks-col">
+        <div class="cb-header">概念交集选股 TOP20</div>
+        <div class="v1-picks-table">
+          <div class="v1-picks-list" id="v1PicksList"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="view2" class="view-panel">
+  <div class="v2-sidebar" id="v2Sidebar">
+    <div class="v2-filter-row">
+      <label class="filter-chk">
+        <input type="checkbox" id="v2FilterKcb"> 排除科创
+      </label>
+      <label class="filter-chk">
+        <input type="checkbox" id="v2FilterCyb"> 排除创业
+      </label>
+      <label class="filter-chk">
+        <input type="checkbox" id="v2FilterBjs"> 排除北交
+      </label>
+      <label class="filter-chk">
+        <input type="checkbox" id="v2FilterSt"> 排除ST
+      </label>
+    </div>
+    <div class="v2-sidebar-header">
+      <span id="v2SidebarHeader">候选股（点击切换）</span>
+      <button class="v2-expand-btn" id="v2ExpandBtn" title="展开/收缩列">»</button>
+    </div>
+    <div class="v2-stock-list" id="v2StockList"></div>
+  </div>
+
+  <div class="v2-splitter" id="v2Splitter" title="拖动调整宽度"></div>
+
+  <div class="v2-main">
+    <div id="v2ChartTitle">请先在界面 1 点击概念名，或手工填入概念代码并查询</div>
+    <div id="v2ChartWrap">
+      <div id="v2Chart"></div>
+      <canvas id="v2ChartOverlay"></canvas>
+    </div>
+  </div>
+</div>
+
+  <script src="js/config.js"></script>
+  <script src="js/concept_view1.js"></script>
+  <script src="js/concept_view2.js"></script>
+  <script src="js/concept_boot.js"></script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+# ─────────────────────────────────────────────────────────────
+# stockDisplay —— Python 依赖清单
+#
+# 环境：Python 3.11+（conda env 名：stock）
+# 安装：
+#     conda activate stock
+#     pip install -r requirements.txt
+#
+# 说明：
+#   - 前端 Lightweight Charts 通过 CDN 引入，无需安装
+#   - 前端为纯静态文件（HTML/CSS/JS），无 Node.js 依赖
+#   - 如需锁定精确版本，另存 pip freeze > requirements.lock
+# ─────────────────────────────────────────────────────────────
+
+# ─────── Web 后端 ───────
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.27,<1.0
+
+# ─────── 数据处理 ───────
+pandas>=2.1,<3.0
+numpy>=1.24,<3.0
+pyarrow>=14.0,<20.0         # pandas 读写 parquet
+duckdb>=1.0,<2.0            # hive_partitioning、union_by_name 需 0.10+
+openpyxl>=3.1,<4.0          # pandas 读 xlsx
+
+# ─────── 数据源 ───────
+akshare>=1.12               # 交易日历
+requests>=2.31,<3.0         # 通达信问小达 HTTP 接口
+browser_cookie3>=0.19       # 自动从浏览器读取 ASPSessionID

@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Stock Display · K线 + 指标</title>
+  <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="toolbar">
+    <div class="toolbar-row">
+      <label>代码</label>
+      <input id="code" value="000001" size="8">
+
+      <span id="dateRangeGroup">
+        <button id="prevDay" class="day-nav-btn" title="上一交易日">‹</button>
+        <label>开始</label>
+        <input id="start" type="date">
+        <label>结束</label>
+        <input id="end" type="date">
+        <button id="nextDay" class="day-nav-btn" title="下一交易日">›</button>
+      </span>
+
+      <span id="singleDateGroup" style="display:none">
+        <label>日期</label>
+        <input id="tradeDate" type="date">
+      </span>
+
+      <label>数据源</label>
+      <label class="radio-toggle active"><input type="radio" name="datasource" value="stock" checked>个股</label>
+      <label class="radio-toggle"><input type="radio" name="datasource" value="industry">行业</label>
+      <label class="radio-toggle"><input type="radio" name="datasource" value="concept">概念</label>
+      <button id="load">查询</button>
+      <button id="fit" title="缩放至显示全部数据">适屏</button>
+      <span id="drawTools">
+        <button class="draw-btn active" data-tool="none" title="选择">光标</button>
+        <button class="draw-btn" data-tool="hline" title="水平线">横线</button>
+        <button class="draw-btn" data-tool="vline" title="垂直线">竖线</button>
+        <button class="draw-btn" data-tool="trend" title="趋势线（点两点）">趋势线</button>
+        <button class="draw-btn" data-tool="ray" title="射线（点两点）">射线</button>
+        <button class="draw-btn" data-tool="erase" title="点击线条删除">删除</button>
+        <button class="draw-btn" id="clearDrawings" title="清除全部线条">清空</button>
+      </span>
+      <span id="status"></span>
+    </div>
+
+    <div class="toolbar-row" id="overlayRow">
+      <label>均线</label>
+      <label class="ma-toggle" style="--c:#f5f5f5"><input type="checkbox" data-line="ma5" checked>MA5</label>
+      <label class="ma-toggle" style="--c:#f0b90b"><input type="checkbox" data-line="ma10" checked>MA10</label>
+      <label class="ma-toggle" style="--c:#a855f7"><input type="checkbox" data-line="ma20" checked>MA20</label>
+      <label class="ma-toggle" style="--c:#06b6d4"><input type="checkbox" data-line="ma30">MA30</label>
+      <label class="ma-toggle" style="--c:#f97316"><input type="checkbox" data-line="ma60">MA60</label>
+      <label class="ma-toggle" style="--c:#e91e63"><input type="checkbox" data-line="ma120">MA120</label>
+      <label class="ma-toggle" style="--c:#9ca3af"><input type="checkbox" data-line="ma250">MA250</label>
+      <label class="ma-toggle" style="--c:#6c5ce7"><input type="checkbox" data-line="boll">BOLL</label>
+
+      <label style="margin-left:12px">指标1</label>
+      <div class="cascade-dd" id="dd-ind1">
+        <button class="dd-trigger" type="button">
+          <span class="dd-label">1日超大单净额</span>
+          <span class="dd-arrow">▾</span>
+        </button>
+        <div class="dd-panel"></div>
+      </div>
+
+      <label style="margin-left:12px">指标2</label>
+      <div class="cascade-dd" id="dd-ind2">
+        <button class="dd-trigger" type="button">
+          <span class="dd-label">1日中单净额</span>
+          <span class="dd-arrow">▾</span>
+        </button>
+        <div class="dd-panel"></div>
+      </div>
+
+      <label style="margin-left:12px">指标3</label>
+      <div class="cascade-dd" id="dd-ind3">
+        <button class="dd-trigger" type="button">
+          <span class="dd-label">1日小单净额</span>
+          <span class="dd-arrow">▾</span>
+        </button>
+        <div class="dd-panel"></div>
+      </div>
+      <label style="margin-left:12px">标注阈值</label>
+      <input id="normThreshold" type="number" step="0.05" min="0"
+             value="1.00" style="width:80px">
+    </div>
+  </div>
+
+  <div id="chartWrap">
+    <div id="chart"></div>
+    <canvas id="chartOverlay"></canvas>
+    <canvas id="drawCanvas"></canvas>
+
+    <div id="conceptView">
+      <div id="conceptBarPanel">
+        <div class="concept-bar-col" id="marketBarCol"></div>
+        <div class="concept-bar-col" id="stockBarCol"></div>
+      </div>
+      <div id="conceptLower">
+        <div class="concept-picks-col" id="picksTop5Col"></div>
+        <div class="concept-picks-col" id="picksTop10Col"></div>
+      </div>
+    </div>
+
+    <div id="legend"></div>
+    <div id="missingWarning"></div>
+  </div>
+<script src="js/config.js"></script>
+<script src="js/chart.js"></script>
+<script src="js/load_data.js"></script>
+<script src="js/drawline.js"></script>
+
+<script src="js/boot.js"></script>
+</body>
+</html>
