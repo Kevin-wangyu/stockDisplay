@@ -42,7 +42,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--skip-etl", action="store_true", help="跳过增量 ETL")
     p.add_argument("--force-etl", action="store_true", help="ETL 强制重跑已存在分区")
     p.add_argument("--etl-date", default=None, help="ETL 只处理该日期（YYYYMMDD）")
-    p.add_argument("--no-reload", action="store_true", help="关闭 uvicorn 热重载")
+    p.add_argument("--no-reload", action="store_true", default=True, help="关闭 uvicorn 热重载")
     return p.parse_args()
 
 # ─────────────── 15:30 后自动更新依赖 ───────────────
@@ -71,35 +71,41 @@ def _update_cookie_in_config(new_value: str) -> None:
     cfg_path.write_text(new_text, encoding="utf-8")
 
 def maybe_rebuild_month_archive() -> None:
-    """每月首次启动时重跑当月+上月月合并（用 marker 文件追踪）。
+    """每次启动检查：若 data 里有比 compact 更新的当月文件，重建当月 compact。"""
+    from datetime import date
+    from config import DATA_DIR
+    COMPACT_ROOT = DATA_DIR.parent / "data_compact"
 
-    1 日启动会触发；1 日没启动，2 日首次启动也会触发。
-    """
-    marker_file = DATA_DIR / ".last_archive_month"
     today = date.today()
     cur_month = today.strftime("%Y-%m")
 
-    last = None
-    if marker_file.exists():
-        try:
-            last = marker_file.read_text(encoding="utf-8").strip()
-        except Exception:
-            pass
-
-    if last == cur_month:
-        return  # 本月已重跑过
-
-    print(f"[serve] 本月首次启动，重建月合并归档（当月+上月）…")
     try:
         from archive_month import archive_kind, KINDS
         import duckdb as _dd
         con_arc = _dd.connect()
+
         for kind, kdir in KINDS.items():
-            if kdir.exists():
+            if not kdir.exists():
+                continue
+            compact_file = COMPACT_ROOT / kind / f"{cur_month}.parquet"
+
+            need_rebuild = False
+            if not compact_file.exists():
+                need_rebuild = True
+            else:
+                compact_mtime = compact_file.stat().st_mtime
+                # data 下当月最新 part.parquet 的 mtime
+                for p in kdir.iterdir():
+                    if p.is_dir() and p.name.startswith(f"trade_date={cur_month}"):
+                        part = p / "part.parquet"
+                        if part.exists() and part.stat().st_mtime > compact_mtime:
+                            need_rebuild = True
+                            break
+
+            if need_rebuild:
+                logger.info(f"[serve] 重建 {kind} 当月 compact…")
                 archive_kind(kind, kdir, con_arc,
                              rebuild_current=True, dry_run=False)
-        marker_file.write_text(cur_month, encoding="utf-8")
-        print("[serve] 月合并归档更新完成")
     except Exception:
         logging.getLogger(__name__).exception("[serve] 月合并更新失败，继续启动")
 
@@ -188,7 +194,7 @@ def ensure_data_ready() -> None:
             print("[serve]   无法自动获取（行情源仅支持补拉至 09:15），"
                   "请手动获取后再运行 serve.py")
         else:
-            print("[serve] 盘中时段（09:15~15:30），跳过数据更新")
+            logger.info("[serve] 盘中时段（09:15~15:30），跳过数据更新")
         return
 
     # ── 窗口 3：15:30 后，更新当日数据 ──
@@ -263,15 +269,12 @@ def main() -> None:
     args = parse_args()
     setup_logging()
 
-    # ── 1a. 每月首次启动重建月合并 ──
-    maybe_rebuild_month_archive()
-
-    # ── 1b. 按时间窗口更新数据 ──
+    # ── 1. 按时间窗口更新数据 ──
     ensure_data_ready()
 
     # ── 2. 增量 ETL ──
     if args.skip_etl:
-        print("[serve] 已跳过增量 ETL")
+        logger.info("[serve] 已跳过增量 ETL")
     else:
         target = None
         if args.etl_date:
@@ -289,10 +292,10 @@ def main() -> None:
                         if isinstance(s, dict) and "processed" in s)
                 f = sum(len(s.get("failed", [])) for s in stats.values()
                         if isinstance(s, dict) and "failed" in s)
-                print(f"[serve] 增量 ETL 完成: 处理 {p} 个文件, 失败 {f}")
+                logger.info(f"[serve] 增量 ETL 完成: 处理 {p} 个文件, 失败 {f}")
         except Exception as e:
-            print(f"[serve] 增量 ETL 失败: {e}")
-            print("[serve] 继续启动服务（请手动检查日志 logs/etl.log）")
+            logger.info(f"[serve] 增量 ETL 失败: {e}")
+            logger.info("[serve] 继续启动服务（请手动检查日志 logs/etl.log）")
 
     # ── 3. 数据完整性检查 ──
     try:
@@ -303,37 +306,30 @@ def main() -> None:
     # 启动时只增量最近 3 天（< 5s）
     try:
         from queries import (
-            rebuild_market_amount, rebuild_daily_pct, rebuild_limit_up_streak, 
+            rebuild_market_amount, rebuild_daily_pct, rebuild_limit_up_streak,
             _get_tops_and_scores, _build_intersection_picks, _save_picks_cache,
             _list_partition_dates,
         )
         n_ma = rebuild_market_amount()
-        print(f"[serve] market_amount 新增 {n_ma} 天")
         n_dp = rebuild_daily_pct(force_recent_days=3)
-        print(f"[serve] daily_pct 写入 {n_dp} 天")
         n_st = rebuild_limit_up_streak(limit_days=3, force_recent_days=3)
-        print(f"[serve] limit_up_streak 写入 {n_st} 天")
-                # 重建当月 + 上月月合并（覆盖最新数据）
-        try:
-            from archive_month import archive_kind, KINDS
-            import duckdb as _dd
-            _con_arc = _dd.connect()
-            for _kind, _dir in KINDS.items():
-                if _dir.exists():
-                    archive_kind(_kind, _dir, _con_arc,
-                                 rebuild_current=True, dry_run=False)
-            print("[serve] 月合并归档更新完成")
-        except Exception:
-            logging.getLogger(__name__).exception("[serve] 月合并更新失败，继续启动")
 
-        # 顺便补一下最新日期的 picks
+        # ⭐ compact 重建必须在所有查询之前（否则 _get_tops_and_scores 查不到当天）
+        maybe_rebuild_month_archive()
+
+        # 补最新日期的 picks（此时 compact 已包含当天数据）
         all_td = _list_partition_dates(CONCEPT_DIR)
         for d in all_td[-1:]:
             p = CONCEPT_PICKS_DIR / f"trade_date={d}" / "part.parquet"
             if not p.exists():
-                mt, ta, tp, tl, _ = _get_tops_and_scores(d)
-                picks = _build_intersection_picks(ta, tp, tl, d, mt)
-                _save_picks_cache(d, picks)
+                try:
+                    mt, ta, tp, tl, _ = _get_tops_and_scores(d)
+                    picks = _build_intersection_picks(ta, tp, tl, d, mt)
+                    _save_picks_cache(d, picks)
+                    logger.info(f"[serve] {d} picks 已生成")
+                except Exception:
+                    logging.getLogger(__name__).exception(
+                        "[serve] %s picks 生成失败", d)# ETL + 增量完成后再重建月合并（保证 compact 覆盖最新数据）
     except Exception:
         logging.getLogger(__name__).exception("增量更新失败，继续启动")
 

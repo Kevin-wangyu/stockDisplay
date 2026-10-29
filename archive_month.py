@@ -20,7 +20,8 @@ import duckdb
 from config import (
     DATA_DIR, QUOTE_DIR, INDUSTRY_DIR, CONCEPT_DIR, CONCEPT_DATE_DIR, DAILY_PCT_DIR,
 )
-
+import logging
+logger = logging.getLogger(__name__)
 COMPACT_ROOT = DATA_DIR.parent / "data_compact"
 
 KINDS = {
@@ -87,7 +88,7 @@ def rebuild_month(kind: str, kind_dir: Path, month: str, con, dry_run=False) -> 
                 ORDER BY trade_date, code
             ) TO '{out_path}' (FORMAT PARQUET)
         """)
-        print(f"[{kind}] {month} 完成 → {out_file.name}")
+        logger.info(f"[{kind}] {month} 完成 → {out_file.name}")
         return True
     except Exception as e:
         print(f"[{kind}] {month} 失败: {e}")

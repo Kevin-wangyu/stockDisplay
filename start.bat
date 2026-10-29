@@ -8,18 +8,25 @@ echo   stockDisplay 启动中...
 echo ============================================================
 echo.
 
-REM 检查 conda 是否可用
-where conda >nul 2>&1
-if errorlevel 1 (
-    echo [错误] 未找到 conda 命令。
-    echo 请先运行一次: conda init cmd.exe
-    echo 然后关闭并重新打开终端再试。
+REM 动态查询 conda 环境路径（只查一次，不进 conda run）
+for /f "delims=" %%i in ('conda info --base 2^>nul') do set CONDA_BASE=%%i
+
+if not defined CONDA_BASE (
+    echo [错误] 未找到 conda，请运行一次: conda init cmd.exe
     pause
     exit /b 1
 )
 
-REM 用 stock 环境运行；--no-capture-output 保证日志实时输出
-conda run --no-capture-output -n stock python serve.py %*
+set PYTHON_EXE=%CONDA_BASE%\envs\stock\python.exe
+
+if not exist "%PYTHON_EXE%" (
+    echo [错误] 未找到 conda 环境 stock: %PYTHON_EXE%
+    echo 请先创建: conda create -n stock python=3.11
+    pause
+    exit /b 1
+)
+
+"%PYTHON_EXE%" serve.py %*
 
 if errorlevel 1 (
     echo.

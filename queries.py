@@ -62,24 +62,32 @@ COMPACT_ROOT = DATA_DIR.parent / "data_compact"
 BASE_DIR = QUOTE_DIR.parent.parent
 
 def _make_glob(kind: str) -> str:
-    """查询路径：优先 compact（月合并），没有才回退到 data（日分区）。
-    
-    - compact 存在且有文件 → 只读 compact（覆盖全部历史，含最新月份）
-    - compact 不存在 → 读 data（首次归档前 / 归档失败时兜底）
-    """
+    """查询路径：只读 compact（月合并）。compact 不存在时 fallback 到 data。"""
     compact_dir = BASE_DIR / "data_compact" / kind
     data_dir = BASE_DIR / "data" / kind
 
     if compact_dir.exists() and any(compact_dir.rglob("*.parquet")):
-        return f"'{str(compact_dir).replace(chr(92), '/')}/**/*.parquet'"
+        p = str(compact_dir / "**" / "*.parquet").replace("\\", "/")
+        return f"'{p}'"
 
-    return f"'{str(data_dir).replace(chr(92), '/')}/**/*.parquet'"
+    p = str(data_dir / "**" / "*.parquet").replace("\\", "/")
+    return f"'{p}'"
 
 # 这里的变量现在自带了单引号，或者是一个列表
 QUOTE_GLOB     = _make_glob("quote")
 INDUSTRY_GLOB  = _make_glob("industry_flow")
 CONCEPT_GLOB   = _make_glob("concept_flow")
 DAILY_PCT_GLOB = _make_glob("daily_pct")
+
+def _make_glob_raw(kind: str) -> str:
+    """原始 data 分区 glob，增量函数专用（读最新写入的日分区）。"""
+    data_dir = BASE_DIR / "data" / kind
+    return f"'{str(data_dir / '**' / '*.parquet').replace(chr(92), '/')}'"
+
+# 增量函数用 raw（读 data/）
+QUOTE_RAW_GLOB      = _make_glob_raw("quote")
+DAILY_PCT_RAW_GLOB  = _make_glob_raw("daily_pct")
+INDUSTRY_RAW_GLOB   = _make_glob_raw("industry_flow")
 
 def _get_globs(data_dir: Path, sub_name: str) -> str:
     return _make_glob(sub_name)
@@ -161,7 +169,7 @@ def rebuild_market_amount() -> int:
         r = _q_fetchone(
             f"""
             SELECT SUM(amount) AS total
-            FROM read_parquet({INDUSTRY_GLOB}, hive_partitioning=true)
+            FROM read_parquet({INDUSTRY_RAW_GLOB}, hive_partitioning=true)
             WHERE trade_date = ?
             """,
             [d],
@@ -213,8 +221,8 @@ def rebuild_daily_pct(force_recent_days: int = 10) -> int:
     ph = ",".join(["?"] * len(needed))
     raw = _q_df(
         f"""
-        SELECT code, trade_date, close
-        FROM read_parquet({QUOTE_GLOB}, hive_partitioning=true,
+        SELECT DISTINCT code, trade_date, close
+        FROM read_parquet({QUOTE_RAW_GLOB}, hive_partitioning=true,
                           union_by_name=true)
         WHERE trade_date IN ({ph})
         """, needed)
@@ -563,8 +571,10 @@ def _get_tops_and_scores(trade_date: str):
 
     base = _q_df(
         f"""
-        SELECT code, name, amount, turnover_rate, total_market_cap, pct_change
-        FROM read_parquet({CONCEPT_GLOB}, hive_partitioning=true)
+        SELECT DISTINCT code, name, amount, turnover_rate,
+                        total_market_cap, pct_change
+        FROM read_parquet({CONCEPT_GLOB}, hive_partitioning=true,
+                          union_by_name=true)
         WHERE trade_date = ?
         """, [trade_date])
     if base.empty:
@@ -1170,7 +1180,7 @@ def get_concept_panel(code: str, trade_date: str, days: int = 120) -> dict:
     # 3. 该股票所属概念，当日柱状图数据（按成交额降序）
     bars_df = _q_df(
         f"""
-        SELECT code, name, amount, turnover_rate
+        SELECT DISTINCT code, name, amount, turnover_rate
         FROM read_parquet({CONCEPT_GLOB}, hive_partitioning=true)
         WHERE trade_date = ? AND code IN ({ph2})
         """,
@@ -1196,7 +1206,7 @@ def get_concept_panel(code: str, trade_date: str, days: int = 120) -> dict:
 
         bars_df = _q_df(
             f"""
-            SELECT code, name, amount, turnover_rate
+            SELECT DISTINCT code, name, amount, turnover_rate
             FROM read_parquet({CONCEPT_GLOB}, hive_partitioning=true)
             WHERE trade_date = ? AND code IN ({ph2})
             """,
@@ -1222,7 +1232,7 @@ def get_concept_panel(code: str, trade_date: str, days: int = 120) -> dict:
     # 3.5 全市场概念 TOP15（同 trade_date）
     market_df = _q_df(
         f"""
-        SELECT code, name, amount, turnover_rate
+        SELECT DISTINCT code, name, amount, turnover_rate
         FROM read_parquet({CONCEPT_GLOB}, hive_partitioning=true)
         WHERE trade_date = ?
         ORDER BY amount DESC NULLS LAST
@@ -1271,7 +1281,7 @@ def get_concept_panel(code: str, trade_date: str, days: int = 120) -> dict:
 
     base_df = _q_df(
         f"""
-        SELECT code, trade_date, amount, turnover_rate,
+        SELECT DISTINCT code, trade_date, amount, turnover_rate,
                huge_order_net, big_order_net, medium_order_net, small_order_net
         FROM read_parquet({CONCEPT_GLOB}, hive_partitioning=true)
         WHERE code IN ({ph2}) AND trade_date BETWEEN ? AND ?
@@ -1302,7 +1312,7 @@ def get_concept_panel(code: str, trade_date: str, days: int = 120) -> dict:
 
     # 3.6 概念交叉选股：按 TOP5 / TOP10 概念匹配数选股
     stocks_df = _q_df(
-        f"SELECT code, name, concepts FROM read_parquet('{MAP_FILE}')"
+        f"SELECT DISTINCT code, name, concepts FROM read_parquet('{MAP_FILE}')"
     )
 
     def _pick_for_n(n: int) -> list[dict]:
@@ -1630,7 +1640,7 @@ def rebuild_limit_up_streak(force: bool = False, limit_days: int = 200,
     t1 = time.time()
     ph = ",".join(["?"] * len(buffered))
     dp_df = _q_df(
-        f"SELECT code, trade_date, pct_change "
+        f"SELECT DISTINCT code, trade_date, pct_change "
         f"FROM read_parquet({DAILY_PCT_GLOB}, hive_partitioning=true) "
         f"WHERE trade_date IN ({ph})", buffered)
     logger.info("[limit_up_streak] 读 daily_pct 耗时 %.2fs（%d 行）",
@@ -1659,7 +1669,7 @@ def _rebuild_streak_for_date(trade_date: str) -> None:
 
     ph = ",".join(["?"] * len(buffered))
     dp_df = _q_df(
-        f"SELECT code, trade_date, pct_change "
+        f"SELECT DISTINCT code, trade_date, pct_change "
         f"FROM read_parquet({DAILY_PCT_GLOB}, hive_partitioning=true) "
         f"WHERE trade_date IN ({ph})", buffered)
     long_df = _vectorized_streak(dp_df, buffered)

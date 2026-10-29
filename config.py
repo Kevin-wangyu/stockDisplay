@@ -3,7 +3,7 @@ from pathlib import Path
 
 # 项目根目录
 BASE_DIR = Path(__file__).parent
-COOKIE = "2962709072308014570"
+COOKIE = "1089151297208129569"
 # 原始 Excel 存放目录
 RAW_DIR = BASE_DIR / "raw_data"
 RAW_QUOTE_DIR = RAW_DIR / "个股数据"
