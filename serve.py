@@ -47,16 +47,6 @@ def parse_args() -> argparse.Namespace:
 
 # ─────────────── 15:30 后自动更新依赖 ───────────────
 
-def _latest_expected_trading_day(n) -> date | None:
-    """返回最近一个交易日（今天若是交易日就是今天，否则回退）。"""
-    from trading_calendar import trading_days
-    today = date.today()
-    days = trading_days(today - timedelta(days=20), today)
-    if not days:
-        return None
-    return days[-n]
-
-
 def _has_quote_data(trade_date: date) -> bool:
     """quote 分区目录下是否已有该交易日的 parquet。"""
     p = QUOTE_DIR / f"trade_date={trade_date.isoformat()}"
@@ -80,60 +70,136 @@ def _update_cookie_in_config(new_value: str) -> None:
         raise RuntimeError("未能在 config.py 中找到 COOKIE 定义")
     cfg_path.write_text(new_text, encoding="utf-8")
 
+def maybe_rebuild_month_archive() -> None:
+    """每月首次启动时重跑当月+上月月合并（用 marker 文件追踪）。
 
-def ensure_data_ready() -> None:
-    """15:30 后：若最近交易日无 quote 数据，提示输入 ASPSessionID 并写入 config，然后拉数据。"""
-    now = datetime.now()
-    if now.time() > datetime.strptime("09:30", "%H:%M").time() and now.time() < datetime.strptime("15:30", "%H:%M").time():
-        print("[serve] 当前时间在9:30 到 15:30之间，跳过当日数据更新")
-        return
-    latest = _latest_expected_trading_day(1)
-    if now.time() < datetime.strptime("09:30", "%H:%M").time():
-        latest = _latest_expected_trading_day(2)
+    1 日启动会触发；1 日没启动，2 日首次启动也会触发。
+    """
+    marker_file = DATA_DIR / ".last_archive_month"
+    today = date.today()
+    cur_month = today.strftime("%Y-%m")
 
-    if latest is None:
-        print("[serve] 无法从交易日历获取最近交易日，跳过自动更新")
-        return
-
-    if _has_quote_data(latest):
-        print(f"[serve] 最近交易日 {latest} 已有数据，跳过 cookie 输入")
-    else:
-        print()
-        print("=" * 60)
-        print(f"[serve] 未检测到最近交易日 {latest} 的行情数据")
-        print("[serve] 请登录行情网站 → F12 → Application → Cookies")
-        print("[serve] 找到 ASPSessionID 并复制其值")
-        print("=" * 60)
+    last = None
+    if marker_file.exists():
         try:
-            val = input("[serve] 请输入 ASPSessionID（直接回车取消）: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\n[serve] 输入被取消")
-            sys.exit(1)
-        if not val:
-            print("[serve] 未输入 ASPSessionID，退出")
-            sys.exit(1)
+            last = marker_file.read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
 
-        try:
-            _update_cookie_in_config(val)
-        except Exception as e:
-            print(f"[serve] 写入 config.py 失败: {e}")
-            sys.exit(1)
+    if last == cur_month:
+        return  # 本月已重跑过
 
-        # 让后续 import 的模块看到新 cookie
-        import importlib, config
-        importlib.reload(config)
-        # 强制重新 import xdget_daily，避免它缓存旧 COOKIE
-        sys.modules.pop("xdget_daily", None)
-        print("[serve] 已更新 config.COOKIE 并重载 config")
+    print(f"[serve] 本月首次启动，重建月合并归档（当月+上月）…")
+    try:
+        from archive_month import archive_kind, KINDS
+        import duckdb as _dd
+        con_arc = _dd.connect()
+        for kind, kdir in KINDS.items():
+            if kdir.exists():
+                archive_kind(kind, kdir, con_arc,
+                             rebuild_current=True, dry_run=False)
+        marker_file.write_text(cur_month, encoding="utf-8")
+        print("[serve] 月合并归档更新完成")
+    except Exception:
+        logging.getLogger(__name__).exception("[serve] 月合并更新失败，继续启动")
 
-    print("[serve] 开始自动更新当日数据 …")
+def _prev_trading_day(d: date) -> date | None:
+    """严格小于 d 的最近交易日。"""
+    days = trading_days(d - timedelta(days=20), d - timedelta(days=1))
+    return days[-1] if days else None
+
+
+def _is_trading_day(d: date) -> bool:
+    return bool(trading_days(d, d))
+
+
+def _prompt_cookie_and_fetch(target_date: date) -> None:
+    """统一流程：提示输入 cookie → 写入 config → 重载 → 拉数据。"""
+    print()
+    print("=" * 60)
+    print(f"[serve] 未检测到 {target_date} 的行情数据")
+    print("[serve] 请登录行情网站 → F12 → Application → Cookies")
+    print("[serve] 找到 ASPSessionID 并复制其值")
+    print("=" * 60)
+    try:
+        val = input("[serve] 请输入 ASPSessionID（直接回车取消）: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\n[serve] 输入被取消")
+        sys.exit(1)
+    if not val:
+        print("[serve] 未输入 ASPSessionID，退出")
+        sys.exit(1)
+
+    try:
+        _update_cookie_in_config(val)
+    except Exception as e:
+        print(f"[serve] 写入 config.py 失败: {e}")
+        sys.exit(1)
+
+    import importlib, config
+    importlib.reload(config)
+    sys.modules.pop("xdget_daily", None)
+    print("[serve] 已更新 config.COOKIE 并重载 config")
+
+    print(f"[serve] 开始拉取 {target_date} 数据 …")
     try:
         import xdget_daily
-        xdget_daily.run(latest)
-        print("[serve] 当日数据更新完成")
+        xdget_daily.run(target_date)
+        print(f"[serve] {target_date} 数据拉取完成")
     except Exception as e:
-        print(f"[serve] 当日数据更新失败: {e}")
+        print(f"[serve] {target_date} 数据拉取失败: {e}")
         print("[serve] 继续启动服务，请手动检查数据/日志")
+
+
+def ensure_data_ready() -> None:
+    """按时间窗口处理数据更新。
+
+    ┌──────────────┬────────────────────────────────────────────┐
+    │ < 09:15      │ 允许补"上一交易日"数据（需要 ASPSessionID）│
+    │ 09:15~15:30  │ 拒绝补上一交易日数据；跳过当日数据          │
+    │ >= 15:30     │ 更新"当日"数据（今日须是交易日）            │
+    └──────────────┴────────────────────────────────────────────┘
+    """
+    now = datetime.now()
+    now_t = now.time()
+    today = now.date()
+
+    T_0915 = datetime.strptime("09:15", "%H:%M").time()
+    T_1530 = datetime.strptime("15:30", "%H:%M").time()
+
+    # ── 窗口 1：9:15 前，可补上一交易日 ──
+    if now_t < T_0915:
+        prev_d = _prev_trading_day(today)
+        if prev_d is None:
+            print("[serve] 无法确定上一交易日，跳过")
+            return
+        if _has_quote_data(prev_d):
+            print(f"[serve] 上一交易日 {prev_d} 已有数据，跳过 cookie 输入")
+            return
+        print(f"[serve] 检测到上一交易日 {prev_d} 无数据，开始补拉…")
+        _prompt_cookie_and_fetch(prev_d)
+        return
+
+    # ── 窗口 2：9:15 ~ 15:30，盘中，拒绝补数据 ──
+    if now_t < T_1530:
+        prev_d = _prev_trading_day(today)
+        if prev_d and not _has_quote_data(prev_d):
+            print(f"[serve] ⚠ 上一交易日 {prev_d} 数据未更新，且已超过 09:15")
+            print("[serve]   无法自动获取（行情源仅支持补拉至 09:15），"
+                  "请手动获取后再运行 serve.py")
+        else:
+            print("[serve] 盘中时段（09:15~15:30），跳过数据更新")
+        return
+
+    # ── 窗口 3：15:30 后，更新当日数据 ──
+    if not _is_trading_day(today):
+        print(f"[serve] 今日（{today}）非交易日，跳过当日数据更新")
+        return
+    if _has_quote_data(today):
+        print(f"[serve] 今日（{today}）已有数据，跳过 cookie 输入")
+        return
+    print(f"[serve] 检测到今日（{today}）无数据，开始拉取…")
+    _prompt_cookie_and_fetch(today)
 
 def check_data_integrity() -> None:
     """检查数据的日期覆盖，对缺失的交易日 logger.warning。"""
@@ -197,7 +263,10 @@ def main() -> None:
     args = parse_args()
     setup_logging()
 
-    # ── 1. 当日 15:30 后自动更新数据 ──
+    # ── 1a. 每月首次启动重建月合并 ──
+    maybe_rebuild_month_archive()
+
+    # ── 1b. 按时间窗口更新数据 ──
     ensure_data_ready()
 
     # ── 2. 增量 ETL ──
@@ -244,6 +313,19 @@ def main() -> None:
         print(f"[serve] daily_pct 写入 {n_dp} 天")
         n_st = rebuild_limit_up_streak(limit_days=3, force_recent_days=3)
         print(f"[serve] limit_up_streak 写入 {n_st} 天")
+                # 重建当月 + 上月月合并（覆盖最新数据）
+        try:
+            from archive_month import archive_kind, KINDS
+            import duckdb as _dd
+            _con_arc = _dd.connect()
+            for _kind, _dir in KINDS.items():
+                if _dir.exists():
+                    archive_kind(_kind, _dir, _con_arc,
+                                 rebuild_current=True, dry_run=False)
+            print("[serve] 月合并归档更新完成")
+        except Exception:
+            logging.getLogger(__name__).exception("[serve] 月合并更新失败，继续启动")
+
         # 顺便补一下最新日期的 picks
         all_td = _list_partition_dates(CONCEPT_DIR)
         for d in all_td[-1:]:
@@ -276,7 +358,7 @@ def main() -> None:
         port=args.port,
         reload=not args.no_reload,
         reload_excludes=[
-            "data/*", "logs/*", "raw_data/*", "map/*",
+            "data/*", "data_compact/*", "logs/*", "raw_data/*", "map/*",
             "*.parquet", "*.xlsx", "*.log",
         ],
     )

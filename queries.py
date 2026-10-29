@@ -62,23 +62,18 @@ COMPACT_ROOT = DATA_DIR.parent / "data_compact"
 BASE_DIR = QUOTE_DIR.parent.parent
 
 def _make_glob(kind: str) -> str:
+    """查询路径：优先 compact（月合并），没有才回退到 data（日分区）。
+    
+    - compact 存在且有文件 → 只读 compact（覆盖全部历史，含最新月份）
+    - compact 不存在 → 读 data（首次归档前 / 归档失败时兜底）
+    """
     compact_dir = BASE_DIR / "data_compact" / kind
     data_dir = BASE_DIR / "data" / kind
-    
-    paths = []
-    if compact_dir.exists():
-        paths.append(str(compact_dir / "**" / "*.parquet").replace("\\", "/"))
-    if data_dir.exists():
-        paths.append(str(data_dir / "**" / "*.parquet").replace("\\", "/"))
-        
-    if not paths:
-        return "''"
-    if len(paths) == 1:
-        return f"'{paths[0]}'"  # 返回： 'D:/.../...'
-    
-    # 返回： ['D:/.../...', 'D:/.../...']
-    quoted_paths = [f"'{p}'" for p in paths]
-    return f"[{', '.join(quoted_paths)}]"
+
+    if compact_dir.exists() and any(compact_dir.rglob("*.parquet")):
+        return f"'{str(compact_dir).replace(chr(92), '/')}/**/*.parquet'"
+
+    return f"'{str(data_dir).replace(chr(92), '/')}/**/*.parquet'"
 
 # 这里的变量现在自带了单引号，或者是一个列表
 QUOTE_GLOB     = _make_glob("quote")
@@ -96,7 +91,7 @@ SECTOR_BASE_COLS = [
     "huge_order_net", "big_order_net", "medium_order_net", "small_order_net",
 ]
 
-DEFAULT_INDICATORS = ["main_net_3d", "volume_3d"]
+DEFAULT_INDICATORS = ["small_order_net_1d", "medium_order_net_1d", "huge_order_net_1d"]
 STOCK_BASE_COLS = [
     "trade_date", "code", "name", "pct_change", "industry",
     "open", "high", "low", "close", "volume", "amount",
@@ -369,16 +364,20 @@ def _find_file(sub_name: str, date_dir: str, filename: str) -> Path:
 def _load_stock_index_by_date(trade_date: str):
     # 1. 热分区
     path = CONCEPT_DATE_DIR / f"trade_date={trade_date}" / "part.parquet"
-    
+
     df = pd.DataFrame()
     if path.exists():
         df = pd.read_parquet(path, columns=["code", "concepts"])
     else:
-        # 2. 冷年文件
-        year = trade_date[:4]
-        year_file = COMPACT_ROOT / "concept_date" / f"trade_date={year}" / "part.parquet"
-        if year_file.exists():
-            df = _q_df(f"SELECT code, concepts FROM read_parquet({year_file}) WHERE trade_date = ?", [trade_date])
+        # 2. 冷月文件
+        month = trade_date[:7]
+        month_file = COMPACT_ROOT / "concept_date" / f"{month}.parquet"
+        if month_file.exists():
+            df = _q_df(
+                f"SELECT code, concepts FROM read_parquet('{month_file}') "
+                f"WHERE CAST(trade_date AS VARCHAR) = ?",
+                [trade_date],
+            )
 
     if not df.empty:
         names = _q_df(f"SELECT code, name FROM read_parquet('{MAP_FILE}')")
@@ -430,13 +429,14 @@ def _load_pct_today(trade_date: str):
                 for _, r in df.iterrows() if pd.notna(r["pct_change"])}
 
     # 2. 冷数据（按年合并）
-    year = trade_date[:4]
-    year_file = COMPACT_ROOT / "daily_pct" / f"trade_date={year}" / "part.parquet"
-    if year_file.exists():
-        # 用 DuckDB 查，速度极快，避免 pandas 读入整个大文件
+    # 2. 冷数据（按月合并）
+    month = trade_date[:7]
+    month_file = COMPACT_ROOT / "daily_pct" / f"{month}.parquet"
+    if month_file.exists():
         df = _q_df(
-            f"SELECT code, pct_change FROM read_parquet({year_file}) WHERE trade_date = ?", 
-            [trade_date]
+            f"SELECT code, pct_change FROM read_parquet('{month_file}') "
+            f"WHERE CAST(trade_date AS VARCHAR) = ?",
+            [trade_date],
         )
         if not df.empty:
             return {r["code"]: float(r["pct_change"])
@@ -1867,20 +1867,35 @@ def get_trading_days_around(center: str, before: int = 400, after: int = 0) -> d
     return {"start": dates[lo], "end": dates[hi]}
 
 def get_trading_day_neighbor(trade_date: str, direction: str) -> dict:
-    """返回相邻的实际交易日（基于 daily_pct 分区日期）。"""
+    """相邻交易日：先扫热分区目录（快），翻页超出范围再查 glob（慢但全）。"""
     if direction not in ("prev", "next"):
         raise ValueError("direction 必须是 prev 或 next")
 
+    # 1. 热分区（快速路径）
     dates = sorted(_list_daily_pct_dates())
-    if not dates:
-        return {"date": None}
-
     if direction == "prev":
         prev = [d for d in dates if d < trade_date]
-        return {"date": prev[-1]} if prev else {"date": None}
+        if prev:
+            return {"date": prev[-1]}
     else:
         nxt = [d for d in dates if d > trade_date]
-        return {"date": nxt[0]} if nxt else {"date": None}
+        if nxt:
+            return {"date": nxt[0]}
+
+    # 2. glob 兜底（跨月归档后仍有数据）
+    if direction == "prev":
+        row = _q_fetchone(
+            f"SELECT MAX(trade_date) FROM read_parquet({DAILY_PCT_GLOB}, hive_partitioning=true) "
+            f"WHERE CAST(trade_date AS VARCHAR) < ?", [trade_date])
+    else:
+        row = _q_fetchone(
+            f"SELECT MIN(trade_date) FROM read_parquet({DAILY_PCT_GLOB}, hive_partitioning=true) "
+            f"WHERE CAST(trade_date AS VARCHAR) > ?", [trade_date])
+
+    if not row or not row[0]:
+        return {"date": None}
+    d = row[0]
+    return {"date": d.isoformat() if hasattr(d, "isoformat") else str(d)[:10]}
 # ───────────────────────── 测试 ─────────────────────────
 
 if __name__ == "__main__":
