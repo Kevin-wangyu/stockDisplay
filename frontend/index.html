@@ -81,6 +81,12 @@
         </button>
         <div class="dd-panel"></div>
       </div>
+
+      <span class="seg-control" id="amoSegCtrl" style="margin-left:12px" title="买卖结构">
+        <button class="seg-btn active" data-amo="off">AMO 关</button>
+        <button class="seg-btn" data-amo="ratio">占比</button>
+        <button class="seg-btn" data-amo="amount">金额</button>
+      </span>
       <label style="margin-left:12px">标注阈值</label>
       <input id="normThreshold" type="number" step="0.05" min="0"
              value="1.00" style="width:80px">
@@ -90,6 +96,7 @@
   <div id="chartWrap">
     <div id="chart"></div>
     <canvas id="chartOverlay"></canvas>
+    <canvas id="amoOverlay"></canvas>
     <canvas id="drawCanvas"></canvas>
 
     <div id="conceptView">

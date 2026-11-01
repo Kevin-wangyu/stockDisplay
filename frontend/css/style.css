@@ -411,3 +411,42 @@ body { display: flex; flex-direction: column; }
 }
 .day-nav-btn:hover:not(:disabled) { background: #353a47; color: #fff; }
 .day-nav-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+#amoOverlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 42%;          /* ← 从 42% 开始（K 线占上方） */
+  bottom: 0;
+  z-index: 4;
+  pointer-events: none;
+  width: 100%;
+  display: none;
+}
+#chartWrap.amo-visible #amoOverlay { display: block; }
+/* AMO 三段式开关 */
+.seg-control {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.seg-btn {
+  background: transparent;
+  color: var(--text-dim);
+  border: none;
+  padding: 5px 12px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1;
+  transition: background .12s, color .12s;
+  user-select: none;
+}
+.seg-btn + .seg-btn { border-left: 1px solid var(--border); }
+.seg-btn:hover:not(.active) { background: #353a47; color: var(--text); }
+.seg-btn.active {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 500;
+}

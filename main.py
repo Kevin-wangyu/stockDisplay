@@ -175,6 +175,17 @@ def api_stock_sectors(code: str):
         raise HTTPException(status_code=500, detail=str(e))
     return JSONResponse(content=data)
 
+@app.get("/api/amo/chart")
+def api_amo_chart(
+    code: str = Query(...),
+    start: str = Query(...),
+    end: str = Query(...),
+):
+    try:
+        return queries.get_amo_chart(code, start, end)
+    except Exception as e:
+        logger.exception("amo 查询失败 code=%s", code)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/sector/{kind}/{key}")
 def api_sector_chart(

@@ -247,6 +247,18 @@ async function load() {
         chart.timeScale().fitContent();
         setTimeout(drawNormLabels, 200);
 
+        // AMO 模式开着：加载完 K 线后重拉 amo + 重新应用隐藏
+        if (typeof amoState !== "undefined" && amoState.visible) {
+          setTimeout(() => {
+            setAmoVisible(true);   // 重设价格轴 + 隐藏 3 pane
+            loadAmoData();
+          }, 300);
+        }
+
+        if (amoState.visible) {
+            setTimeout(loadAmoData, 300);
+        }
+
         const tag = dataSource === "stock" ? `${code}` : `行业:${industryName}`;
         setStatus(`${tag} · ${rows.length} 个交易日 · ${rows[0].trade_date} ~ ${rows[rows.length - 1].trade_date}`);
     } catch (e) {
@@ -437,3 +449,126 @@ document.getElementById("prevDay").addEventListener("click",
   () => shiftTradingRange("prev"));
 document.getElementById("nextDay").addEventListener("click",
   () => shiftTradingRange("next"));
+
+  // ═══════════════════════════════════════════════════════════
+// AMO 买卖结构
+// ═══════════════════════════════════════════════════════════
+
+async function loadAmoData() {
+  if (!amoState.visible) return;
+  const code = document.getElementById("code").value.trim();
+  const start = document.getElementById("start").value;
+  const end = document.getElementById("end").value;
+  if (!code || !start || !end) return;
+
+  try {
+    const url = `/api/amo/chart?code=${encodeURIComponent(code)}`
+              + `&start=${start}&end=${end}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    amoState.rows = data.rows || [];
+
+    // 更新 helper 数据的 time 轴（用于坐标系定标）
+    if (amoState.rows.length) {
+      amoState.helper.setData(
+        amoState.rows.map(r => ({ time: r.trade_date, value: 0 }))
+      );
+      amoUpdateScale();
+    } else {
+      amoState.helper.setData([]);
+    }
+
+    setTimeout(() => {
+      renderAmoCanvas();
+    }, 100);
+  } catch (e) {
+    console.error("[amo] 加载失败", e);
+  }
+}
+
+function setAmoVisible(visible) {
+  amoState.visible = visible;
+  const wrap = document.getElementById("chartWrap");
+
+  if (visible) {
+    wrap.classList.add("amo-visible");
+
+    // 隐藏 3 个指标
+    for (const k of ["ind1", "ind2", "ind3"]) {
+      if (paneRefs[k].series) {
+        paneRefs[k].series.applyOptions({ visible: false });
+      }
+      chart.priceScale(k).applyOptions({
+        visible: false,
+        scaleMargins: { top: 0.99, bottom: 0.0 },
+      });
+    }
+
+    // K 线缩到上半部分（2% ~ 40%）
+    chart.priceScale("right").applyOptions({
+      scaleMargins: { top: 0.02, bottom: 0.60 },
+    });
+
+    // amo helper 完全隐藏（只用来定 x 轴，y 轴不用它了）
+    chart.priceScale("amo").applyOptions({ visible: false });
+
+    loadAmoData();
+  } else {
+    wrap.classList.remove("amo-visible");
+    amoClearCanvas();
+
+    for (const k of ["ind1", "ind2", "ind3"]) {
+      if (paneRefs[k].series) {
+        paneRefs[k].series.applyOptions({ visible: true });
+      }
+      chart.priceScale(k).applyOptions({
+        visible: true,
+        scaleMargins: PANES[k],
+      });
+    }
+    chart.priceScale("right").applyOptions({ scaleMargins: PANES.price });
+    chart.priceScale("amo").applyOptions({ visible: false });
+  }
+
+  setTimeout(() => {
+    chart.applyOptions({
+      width: chartEl.clientWidth,
+      height: chartEl.clientHeight,
+    });
+    if (visible) renderAmoCanvas();
+  }, 50);
+}
+
+function setAmoMode(mode) {
+  amoState.mode = mode;
+  document.querySelectorAll("#amoModeGroup .ma-toggle").forEach(el => {
+    el.classList.toggle("active", el.dataset.mode === mode);
+  });
+  amoUpdateScale();
+  setTimeout(renderAmoCanvas, 60);
+}
+
+// 绑定事件
+// AMO 三段式开关
+document.querySelectorAll("#amoSegCtrl .seg-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const mode = btn.dataset.amo;
+    document.querySelectorAll("#amoSegCtrl .seg-btn").forEach(b =>
+      b.classList.toggle("active", b === btn));
+
+    if (mode === "off") {
+      setAmoVisible(false);
+    } else {
+      setAmoVisible(true);
+      setAmoMode(mode);
+    }
+  });
+});
+
+document.querySelectorAll('input[name="amomode"]').forEach(el => {
+  el.addEventListener("change", () => setAmoMode(el.value));
+});

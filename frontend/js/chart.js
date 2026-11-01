@@ -61,6 +61,41 @@ const paneRefs = {
   ind3: { series: null, name: null },
 };
 
+// ─── AMO 买卖结构 ───
+const AMO_COLORS = {
+  // 主买：暖色系（红 → 橙 → 金 → 紫）
+  huge:   { buy: "rgba(239, 83, 80, 0.92)",   sell: "rgba(67, 56, 202, 0.92)"   },  // 红  / 深蓝紫
+  big:    { buy: "rgba(255, 152, 0, 0.92)",   sell: "rgba(2, 132, 199, 0.92)"   },  // 橙  / 蓝
+  medium: { buy: "rgba(255, 193, 7, 0.92)",   sell: "rgba(6, 182, 212, 0.92)"   },  // 金  / 青
+  small:  { buy: "rgba(168, 85, 247, 0.92)",  sell: "rgba(103, 232, 249, 0.92)" },  // 紫  / 浅青
+};
+const AMO_PANES = {
+  price: { top: 0.00, bottom: 0.42 },   // K 线缩到 42%~58% 处
+  amo:   { top: 0.45, bottom: 0.02 },   // amo 区从 45% 到 98%
+};
+
+const amoState = {
+  visible: false,
+  mode: "ratio",       // "ratio" | "amount"
+  rows: [],            // [{trade_date, huge_buy, ...}]
+  helper: null,        // 透明 series，用于坐标转换
+};
+
+// helper series：绑定 amo pane 的坐标系
+amoState.helper = chart.addLineSeries({
+  priceScaleId: "amo",
+  color: "rgba(0,0,0,0)",
+  lineWidth: 1,
+  crosshairMarkerVisible: false,
+  priceLineVisible: false,
+  lastValueVisible: false,
+});
+chart.priceScale("amo").applyOptions({
+  visible: false,
+  scaleMargins: AMO_PANES.amo,
+  borderColor: COLORS.border,
+});
+
 function rebuildPane(paneKey, name, data) {
     const ref = paneRefs[paneKey];
     if (ref.series) { chart.removeSeries(ref.series); ref.series = null; }
@@ -82,6 +117,14 @@ function rebuildPane(paneKey, name, data) {
         borderColor: COLORS.border,
         minimumWidth: 70,
     });
+      // 若 AMO 模式开着，新 series 也隐藏（否则重建后可见）
+    if (typeof amoState !== "undefined" && amoState.visible) {
+      ref.series.applyOptions({ visible: false });
+      chart.priceScale(paneKey).applyOptions({
+        visible: false,
+        scaleMargins: { top: 0.99, bottom: 0.0 },
+      });
+    }
     ref.series.setData(data);
     ref.name = name;
 }
@@ -171,9 +214,151 @@ function drawNormLabels() {
   }
 }
 
+// ─── AMO canvas 渲染 ───
+function amoComputeLayout(mode) {
+  if (mode === "ratio") {
+    return { minV: -50, maxV: 50 };   // ← 从 ±110 改成 ±100
+  }
+  let maxAbs = 0;
+  for (const r of amoState.rows) {
+    maxAbs = Math.max(maxAbs, r.total_buy / 1e8, r.total_sell / 1e8);
+  }
+  const pad = maxAbs * 1.1 || 1;
+  return { minV: -pad, maxV: pad };
+}
+
+function amoUpdateScale() {
+  const { minV, maxV } = amoComputeLayout(amoState.mode);
+  amoState.helper.applyOptions({
+    autoscaleInfoProvider: () => ({
+      priceRange: { minValue: minV, maxValue: maxV },
+    }),
+  });
+}
+
+function renderAmoCanvas() {
+  const canvas = document.getElementById("amoOverlay");
+  if (!canvas) return;
+  if (!amoState.visible) return;
+
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  if (!w || !h) return;
+  if (canvas.width !== Math.round(w * dpr)) canvas.width = Math.round(w * dpr);
+  if (canvas.height !== Math.round(h * dpr)) canvas.height = Math.round(h * dpr);
+
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+
+  if (!amoState.rows.length) return;
+
+  const ts = chart.timeScale();
+  const mode = amoState.mode;
+  const YI = 1e8;
+
+  // ── Y 轴映射：canvas 内部 y 直接从 minV/maxV 线性映射到 h ~ 0 ──
+  const { minV, maxV } = amoComputeLayout(mode);
+  const yOf = (v) => h - ((v - minV) / (maxV - minV)) * h;
+
+  const keys = ["huge", "big", "medium", "small"];
+
+  // 单日柱宽：取可视区域内单日宽度的 70%，限制 2~18px
+  const visibleCount = Math.max(1, amoState.rows.length);
+  const barWidth = Math.max(2, Math.min(18, (w / visibleCount) * 0.7));
+  const halfW = Math.max(1, (barWidth - 1) / 2);
+
+  // ── 逐日堆叠柱（买左卖右，从 0 向上） ──
+  for (const r of amoState.rows) {
+    const x = ts.timeToCoordinate(r.trade_date);
+    if (x == null || x < -20 || x > w + 20) continue;
+
+    const total = r.total_buy + r.total_sell;
+    if (total <= 0) continue;
+
+    let buyVals, sellVals;
+    if (mode === "ratio") {
+      buyVals  = [r.huge_buy, r.big_buy, r.medium_buy, r.small_buy]
+                  .map(v => v / total * 100);
+      sellVals = [r.huge_sell, r.big_sell, r.medium_sell, r.small_sell]
+                  .map(v => v / total * 100);
+    } else {
+      buyVals  = [r.huge_buy, r.big_buy, r.medium_buy, r.small_buy]
+                  .map(v => v / YI);
+      sellVals = [r.huge_sell, r.big_sell, r.medium_sell, r.small_sell]
+                  .map(v => v / YI);
+    }
+
+    const xBuy  = x - halfW - 0.5;
+    const xSell = x + 0.5;
+
+    // 主买（左半边，从 0 向上堆叠）
+    let cum = 0;
+    for (let i = 0; i < 4; i++) {
+      const y1 = yOf(cum);
+      cum += buyVals[i];
+      const y2 = yOf(cum);
+      ctx.fillStyle = AMO_COLORS[keys[i]].buy;
+      ctx.fillRect(xBuy, Math.min(y1, y2), halfW,
+                   Math.max(1, Math.abs(y2 - y1)));
+    }
+
+    // 主卖（右半边，从 0 向上堆叠）
+    cum = 0;
+    for (let i = 0; i < 4; i++) {
+      const y1 = yOf(cum);
+      cum += sellVals[i];
+      const y2 = yOf(cum);
+      ctx.fillStyle = AMO_COLORS[keys[i]].sell;
+      ctx.fillRect(xSell, Math.min(y1, y2), halfW,
+                   Math.max(1, Math.abs(y2 - y1)));
+    }
+  }
+
+  // ── 净主买折线 ──
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  let started = false;
+  for (const r of amoState.rows) {
+    const x = ts.timeToCoordinate(r.trade_date);
+    if (x == null) continue;
+
+    let netVal;
+    if (mode === "ratio") {
+      const total = r.total_buy + r.total_sell;
+      if (total <= 0) continue;
+      netVal = (r.total_buy - r.total_sell) / total * 100;
+    } else {
+      netVal = (r.total_buy - r.total_sell) / YI;
+    }
+    const y = yOf(netVal);
+    if (!started) { ctx.moveTo(x, y); started = true; }
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // ── 零基线 ──
+  const y0 = yOf(0);
+  ctx.strokeStyle = "rgba(255,255,255,0.18)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, y0);
+  ctx.lineTo(w, y0);
+  ctx.stroke();
+}
+function amoClearCanvas() {
+  const canvas = document.getElementById("amoOverlay");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+}
+
 // 缩放 / 滚动 → 重绘
 chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
   requestAnimationFrame(drawNormLabels);
+  requestAnimationFrame(renderAmoCanvas);
 });
 
 // 阈值变化 → 重绘
@@ -184,6 +369,7 @@ document.getElementById("normThreshold")?.addEventListener("input", () => {
 new ResizeObserver(() => {
   chart.applyOptions({ width: chartEl.clientWidth, height: chartEl.clientHeight });
   requestAnimationFrame(drawNormLabels);
+  requestAnimationFrame(renderAmoCanvas);
 }).observe(chartEl);
 
 chart.subscribeCrosshairMove((param) => {
