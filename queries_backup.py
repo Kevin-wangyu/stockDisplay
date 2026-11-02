@@ -288,6 +288,7 @@ def rebuild_daily_pct(force_recent_days: int = 10) -> int:
     logger.info("[daily_pct] 写入 %d 天分区（含最近 %d 天重算）",
                 len(todo), force_recent_days)
     return len(todo)
+
 def _list_daily_pct_dates() -> set[str]:
     """扫描 daily_pct 分区，只认含 part.parquet 的目录。"""
     if not DAILY_PCT_DIR.exists():
@@ -451,7 +452,8 @@ def _compute_top_limit_up(base_df, trade_date, topn=10):
     sub["__order"] = sub["name"].map(name_order)
     sub = sub.sort_values("__order").drop(columns="__order")
     return _clean_concept_rows(sub)
-@lru_cache(maxsize=1)
+
+lru_cache(maxsize=1)
 def _load_alias_map():
     """cf_name -> map_name（进程内永久缓存）。"""
     if not CONCEPT_ALIAS_FILE.exists():
@@ -618,6 +620,7 @@ def _enrich_with_stocks(lists, trade_date):
                 }
             else:
                 it["top_stock"] = None
+
 # ───────────────────────── 交集榜单 Parquet 缓存 ─────────────────────────
 
 def _picks_cache_path(trade_date: str) -> Path:
@@ -710,6 +713,7 @@ def _get_tops_and_scores(trade_date: str):
         top_amount, top_pct, top_limit_up, trade_date, market_total)
 
     return market_total, top_amount, top_pct, top_limit_up, concept_scores
+
 def _compute_concept_scores(top_amount, top_pct, top_limit_up,
                             trade_date, market_total):
     """
@@ -790,6 +794,7 @@ def _compute_concept_scores(top_amount, top_pct, top_limit_up,
             "parts": v["parts"],
         }
     return scores
+
 def _build_intersection_picks(top_amount, top_pct, top_limit_up,
                               trade_date, market_total, concept_scores,
                               topn=40):
@@ -959,6 +964,7 @@ def _build_intersection_picks(top_amount, top_pct, top_limit_up,
         })
 
     return picks
+
 def _market_avg_amount(trade_date: str, days: int) -> float:
     row = _q_fetchone(
         f"""
@@ -995,6 +1001,7 @@ def get_concept_date_top10(trade_date: str) -> dict:
         "picks_cached": bool(picks),
     }
     return _json_safe(result)   # ← 兜底
+
 def _json_safe(obj):
     """递归把 inf/nan 转 None，防止 json.dumps 崩溃。"""
     if isinstance(obj, float):
@@ -2099,6 +2106,7 @@ def get_limit_up_ladder(trade_date: str, min_days: int = 2) -> dict:
     stocks.sort(key=lambda x: (-x["streak_days"], -x["importance_index"], x["code"]))
     result = {"trade_date": trade_date, "stocks": stocks}
     return _json_safe(result)
+
 def get_trading_days_around(center: str, before: int = 400, after: int = 0) -> dict:
     """以 center（含）为基准，返回前后各 N 个交易日的起止日期（clamp 到数据范围）。"""
     from datetime import date as _date, timedelta as _td
@@ -2166,6 +2174,7 @@ def get_trading_day_neighbor(trade_date: str, direction: str) -> dict:
         return {"date": None}
     d = row[0]
     return {"date": d.isoformat() if hasattr(d, "isoformat") else str(d)[:10]}
+
 # ───────────────────────── 测试 ─────────────────────────
 
 if __name__ == "__main__":

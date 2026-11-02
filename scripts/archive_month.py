@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from datetime import date
 
-sys.path.append(str(Path(__file__).parent))
+sys.path.append(str(Path(__file__).parent.parent))
 
 import duckdb
 from config import (

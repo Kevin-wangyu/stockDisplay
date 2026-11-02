@@ -23,34 +23,35 @@ import sys
 import time
 from datetime import date, datetime
 from pathlib import Path
-
+import duckdb
+from functools import lru_cache
 import pandas as pd
 
 sys.path.append(str(Path(__file__).parent.parent))
 
 from config import (
-    DATA_DIR, 
-    RAW_QUOTE_DIR, RAW_INDUSTRY_DIR, RAW_CONCEPT_DIR, RAW_STOCK_CONCEPT_DIR,
-    QUOTE_DIR, INDUSTRY_DIR, CONCEPT_DIR, CONCEPT_DATE_DIR, RAW_AMO_DIR, AMO_DIR,
     MAP_FILE, MAP_RAW_FILE,
-    setup_logging,
-)
+    setup_logging, DATA_DIR)
+
+# ── field_mapping：仍在用的底层函数 ──
 from etl.field_mapping import (
-    STOCK_COL_MAP, STOCK_OUTPUT_COLS,
-    INDUSTRY_COL_MAP, INDUSTRY_OUTPUT_COLS,
-    CONCEPT_COL_MAP, CONCEPT_OUTPUT_COLS,
-    MAP_COL_MAP, MAP_OUTPUT_COLS,
-    STOCK_CONCEPT_COL_MAP, STOCK_CONCEPT_OUTPUT_COLS,
-    STOCK_AMO_COL_MAP, STOCK_AMO_OUTPUT_COLS,
     parse_trade_date,
     ingest_xlsx,
+    MAP_COL_MAP,
+    MAP_OUTPUT_COLS,
 )
 
-logger = logging.getLogger("daily_update")
+# ── registry：类型元信息 ──
+from etl.registry import DATA_TYPES, list_kinds
 
-import duckdb
-from functools import lru_cache
-from config import DATA_DIR
+KINDS = list_kinds("daily_etl")
+TYPE_SPECS = {
+    k: (v["raw_dir"], v["col_map"], v["output_cols"], v["parquet_dir"])
+    for k, v in DATA_TYPES.items()
+    if v.get("in_daily_etl")
+}
+
+logger = logging.getLogger("daily_update")
 
 # 定位冷数据目录
 _COMPACT_DIR = DATA_DIR.parent / "data_compact"
@@ -97,14 +98,15 @@ def _get_compact_dates(sub_name: str, year: int) -> set[str]:
 
 # ───────────────────────── 类型规格 ─────────────────────────
 
+# KINDS：in_daily_etl=True 的类型
+KINDS = list_kinds("daily_etl")
+
+# TYPE_SPECS：{kind: (raw_dir, col_map, output_cols, parquet_dir)}
 TYPE_SPECS = {
-    "amo_components":    (RAW_AMO_DIR, STOCK_AMO_COL_MAP, STOCK_AMO_OUTPUT_COLS, AMO_DIR),
-    "stock":    (RAW_QUOTE_DIR,    STOCK_COL_MAP,    STOCK_OUTPUT_COLS,    QUOTE_DIR),
-    "industry": (RAW_INDUSTRY_DIR, INDUSTRY_COL_MAP, INDUSTRY_OUTPUT_COLS, INDUSTRY_DIR),
-    "concept":  (RAW_CONCEPT_DIR,  CONCEPT_COL_MAP,  CONCEPT_OUTPUT_COLS,  CONCEPT_DIR),
-    "stock_concept": (RAW_STOCK_CONCEPT_DIR,  STOCK_CONCEPT_COL_MAP,  STOCK_CONCEPT_OUTPUT_COLS,  CONCEPT_DATE_DIR),
+    k: (v["raw_dir"], v["col_map"], v["output_cols"], v["parquet_dir"])
+    for k, v in DATA_TYPES.items()
+    if v.get("in_daily_etl")
 }
-KINDS = ["amo_components","stock", "industry", "concept", "stock_concept"]
 
 
 # ───────────────────────── 工具 ─────────────────────────
