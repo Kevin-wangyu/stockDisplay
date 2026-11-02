@@ -594,15 +594,20 @@ function v2RenderCollapsed(stocks) {
     { key: "name",       label: "名称", align: "left"  },
     { key: "pct_change", label: "涨幅", align: "right" },
   ];
-  const head = v2BuildHead(cols, tmpl);
+  const head = v2BuildHead(cols, tmpl, v2RenderFilteredList);
 
-  const rowsHtml = stocks.map(s => `
-    <div class="v2-stock-item" style="grid-template-columns:${tmpl}"
-         data-code="${s.code}" data-name="${s.name}">
-      <span class="v2-stock-code">${s.code}</span>
-      <span class="v2-stock-name" title="${s.name}">${s.name}</span>
-      <span class="v2-stock-pct ${v2Cls(s.pct_change)}">${v2FmtPct(s.pct_change)}</span>
-    </div>`).join("");
+  const rowsHtml = stocks.map(s => {
+    const pctTxt = v2FmtPct(s.pct_change);
+    const pctCls = v2Cls(s.pct_change);
+
+    return `
+      <div class="v2-stock-item" style="grid-template-columns:${tmpl}"
+           data-code="${s.code}" data-name="${s.name}">
+        <span class="v2-stock-code v2-jump-code" title="点击打开 K 线页">${s.code}</span>
+        <span class="v2-stock-name" title="${s.name}">${s.name}</span>
+        <span class="v2-stock-pct ${pctCls}">${pctTxt}</span>
+      </div>`;
+  }).join("");
 
   v2El.stockList.innerHTML = "";
   v2El.stockList.appendChild(head);
@@ -613,20 +618,25 @@ function v2RenderExpanded(stocks) {
   const tmpl = v2GridTemplate();
   const head = v2BuildHead(V2_COLUMNS, tmpl, v2RenderFilteredList);
 
-  const rowsHtml = stocks.map(s => `
-    <div class="v2-stock-row" style="grid-template-columns:${tmpl}"
-         data-code="${s.code}" data-name="${s.name}">
-      <span class="c-code">${s.code}</span>
-      <span class="c-name" title="${s.name}">${s.name}</span>
-      <span class="c-num ${v2Cls(s.pct_change)}">${v2FmtPct(s.pct_change)}</span>
-      <span class="c-num">${v2FmtNum(s.close)}</span>
-      <span class="c-num">${v2FmtNum(s.turnover_rate)}</span>
-      <span class="c-num">${s.hot_rank == null ? "-" : s.hot_rank.toFixed(0)}</span>
-      <span class="c-num ${v2Cls(s.huge_order_net)}">${v2FmtBig(s.huge_order_net)}</span>
-      <span class="c-num ${v2Cls(s.big_order_net)}">${v2FmtBig(s.big_order_net)}</span>
-      <span class="c-num ${v2Cls(s.medium_order_net)}">${v2FmtBig(s.medium_order_net)}</span>
-      <span class="c-num ${v2Cls(s.small_order_net)}">${v2FmtBig(s.small_order_net)}</span>
-    </div>`).join("");
+  const rowsHtml = stocks.map(s => {
+    const pctTxt = v2FmtPct(s.pct_change);
+    const pctCls = v2Cls(s.pct_change);
+
+    return `
+      <div class="v2-stock-row" style="grid-template-columns:${tmpl}"
+           data-code="${s.code}" data-name="${s.name}">
+        <span class="c-code v2-jump-code" title="点击打开 K 线页">${s.code}</span>
+        <span class="c-name" title="${s.name}">${s.name}</span>
+        <span class="c-num ${pctCls}">${pctTxt}</span>
+        <span class="c-num">${v2FmtNum(s.close)}</span>
+        <span class="c-num">${v2FmtNum(s.turnover_rate)}</span>
+        <span class="c-num">${s.hot_rank == null ? "-" : s.hot_rank.toFixed(0)}</span>
+        <span class="c-num ${v2Cls(s.huge_order_net)}">${v2FmtBig(s.huge_order_net)}</span>
+        <span class="c-num ${v2Cls(s.big_order_net)}">${v2FmtBig(s.big_order_net)}</span>
+        <span class="c-num ${v2Cls(s.medium_order_net)}">${v2FmtBig(s.medium_order_net)}</span>
+        <span class="c-num ${v2Cls(s.small_order_net)}">${v2FmtBig(s.small_order_net)}</span>
+      </div>`;
+  }).join("");
 
   v2El.stockList.innerHTML = "";
   v2El.stockList.appendChild(head);
@@ -663,6 +673,22 @@ v2El.stockList.addEventListener("click", (e) => {
   // 命中列头 → 已经通过 v2BuildHead 单独挂载，这里忽略
   if (e.target.closest(".v2-grid-head")) return;
 
+  const codeEl = e.target.closest(".v2-jump-code");
+  if (codeEl) {
+    e.stopPropagation();
+    e.preventDefault();
+    const row = codeEl.closest(".v2-stock-item, .v2-stock-row");
+    const code = row?.dataset.code;
+    if (!code) return;
+
+    const center = document.getElementById("v2Date")?.value || "";
+    const url = `index.html?code=${encodeURIComponent(code)}`
+              + (center ? `&center=${encodeURIComponent(center)}` : "");
+    window.open(url, "_blank");
+    return;
+  }
+
+  // 其它区域 → 正常切换右侧 K 线
   const row = e.target.closest(".v2-stock-item, .v2-stock-row");
   if (!row) return;
   document.querySelectorAll(".v2-stock-item, .v2-stock-row").forEach(x =>

@@ -1268,3 +1268,12 @@
   border-radius: 3px;
   vertical-align: middle;
 }
+/* ── 候选栏 code 可点击跳转 ── */
+.v2-jump-code {
+  cursor: pointer;
+  transition: color .12s;
+}
+.v2-jump-code:hover {
+  color: #6ea8ff !important;
+  text-decoration: underline;
+}
