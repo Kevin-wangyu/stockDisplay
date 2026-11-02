@@ -43,23 +43,9 @@ async function load() {
   }
   __loadInFlight = true;
   try {
-    const myToken = ++loadToken;   
+    const myToken = ++loadToken;
     const code = document.getElementById("code").value.trim();
     if (!code) { setStatus("请输入股票代码", true); return; }
-
-    if (dataSource === "concept") {
-        let trade_date = document.getElementById("tradeDate").value;
-        if (!trade_date) {
-        // 没有就现场拉一次 date_range，用 max_date
-        await loadDateRange();
-        trade_date = document.getElementById("tradeDate").value;
-        if (!trade_date) {
-            setStatus("请先选择股票", true);
-            return;
-        }
-        }
-        return loadConcept(code, trade_date);
-    }
 
     const start = document.getElementById("start").value;
     const end   = document.getElementById("end").value;
@@ -67,6 +53,12 @@ async function load() {
     if (!start || !end) { setStatus("请选择日期范围", true); return; }
     if (start > end)    { setStatus("开始日期不能晚于结束日期", true); return; }
 
+    // ⭐ 概念模式：走新分支
+    if (dataSource === "concept") {
+        return loadConceptMode(code, start, end, myToken);
+    }
+
+    // 下面的 stock / industry 逻辑保持不变
     btn.disabled = true;
     setStatus("加载中…");
 
@@ -297,87 +289,6 @@ function applyPane(paneKey, name) {
 
 // ─────────────── 数据加载（概念） ───────────────
 
-async function loadConcept(code, trade_date) {
-const myToken = ++loadToken;
-btn.disabled = true;
-setStatus("加载中…");
-
-try {
-    const url = `/api/stock/${encodeURIComponent(code)}/concept_panel`
-            + `?trade_date=${trade_date}&days=120`;
-    const res = await fetch(url);
-    if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || `HTTP ${res.status}`);
-    }
-    if (myToken !== loadToken) return;
-    const data = await res.json();
-    if (myToken !== loadToken) return; 
-    state.conceptData = data;
-
-    renderBarColumn("marketBarCol", "全市场概念成交额 TOP15", data.market_top);
-    renderBarColumn("stockBarCol",  "该股票所属概念（按成交额降序）", data.bars);
-    renderStockPicks(data.stock_picks);
-
-    setStatus(`${code} · ${trade_date} · ${data.bars.length} 个概念`);
-} catch (e) {
-    console.error(e);
-    setStatus("错误：" + e.message, true);
-    document.getElementById("marketBarCol").innerHTML = "";
-    document.getElementById("stockBarCol").innerHTML = "";
-    document.getElementById("picksTop5Col").innerHTML = "";
-    document.getElementById("picksTop10Col").innerHTML = "";
-} finally {
-    if (myToken === loadToken) btn.disabled = false;
-}
-}
-
-function renderBarColumn(containerId, title, bars) {
-const el = document.getElementById(containerId);
-if (!bars || !bars.length) {
-    el.innerHTML = `<div class="cb-header">${title} · 无数据</div>`;
-    return;
-}
-const maxAmount = Math.max(...bars.map(b => Math.abs(b.amount || 0)), 1);
-el.innerHTML =
-    `<div class="cb-header">${title}</div>` +
-    bars.map(b => {
-    const pct = Math.min(100, (Math.abs(b.amount || 0) / maxAmount) * 100);
-    return `<div class="concept-bar-row">
-        <div class="concept-bar-name" title="${b.name}">${b.name}</div>
-        <div class="concept-bar-track">
-        <div class="concept-bar-fill" style="width:${pct}%"></div>
-        </div>
-        <div class="concept-bar-value">${fmtBig(b.amount)}</div>
-    </div>`;
-    }).join("");
-}
-
-function renderStockPicks(picks) {
-const renderList = (elId, title, list) => {
-    const el = document.getElementById(elId);
-    if (!list || !list.length) {
-    el.innerHTML = `<div class="picks-header">${title}</div>
-        <div style="color:var(--text-dim);font-size:12px">无匹配</div>`;
-    return;
-    }
-    el.innerHTML =
-    `<div class="picks-header">${title}</div>` +
-    list.map(p => {
-        const csText = (p.matched_concepts || []).join("、");
-        return `<div class="pick-row">
-        <span class="pick-code">${p.code}</span>
-        <span class="pick-name" title="${p.name}">${p.name}</span>
-        <span class="pick-concepts" title="${csText}">${csText}</span>
-        <span class="pick-count">${p.match_count}</span>
-        </div>`;
-    }).join("");
-};
-
-renderList("picksTop5Col",  "TOP5 概念交集选股",  picks ? picks.top5  : []);
-renderList("picksTop10Col", "TOP10 概念交集选股", picks ? picks.top10 : []);
-}
-
 
 // ─────────────── 事件绑定 ───────────────
 
@@ -574,4 +485,172 @@ document.querySelectorAll("#amoSegCtrl .seg-btn").forEach(btn => {
 
 document.querySelectorAll('input[name="amomode"]').forEach(el => {
   el.addEventListener("change", () => setAmoMode(el.value));
+});
+
+// ═══════════════════════════════════════════════════════════
+// 概念模式：左侧候选栏 + 右侧 K 线
+// ═══════════════════════════════════════════════════════════
+
+const conceptState = {
+    concepts: [],
+    active: null,
+};
+
+function _csEscape(s) {
+    return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function renderConceptSidebar(concepts) {
+    const listEl = document.getElementById("conceptList");
+    const countEl = document.getElementById("csCount");
+    countEl.textContent = `(${concepts.length})`;
+
+    if (!concepts.length) {
+        listEl.innerHTML = `<div class="cs-item" style="cursor:default;color:#4b515c">该股无概念数据</div>`;
+        return;
+    }
+
+    listEl.innerHTML = concepts.map(c => `
+        <div class="cs-item" data-name="${_csEscape(c)}" title="${_csEscape(c)}">${_csEscape(c)}</div>
+    `).join("");
+}
+
+function highlightConcept(name) {
+    document.querySelectorAll("#conceptList .cs-item").forEach(el => {
+        el.classList.toggle("active", el.dataset.name === name);
+    });
+}
+
+async function loadConceptMode(code, start, end, myToken) {
+    btn.disabled = true;
+    setStatus("加载中…");
+
+    try {
+        // 1. 拿该股所属概念列表
+        const res = await fetch(`/api/stock/${encodeURIComponent(code)}/sectors`);
+        if (!res.ok) {
+            throw new Error(`获取概念列表失败 HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        if (myToken && myToken !== loadToken) return;
+
+        const concepts = (data.concepts || []).map(c => c.name).filter(Boolean);
+        conceptState.concepts = concepts;
+        renderConceptSidebar(concepts);
+
+        if (!concepts.length) {
+            setStatus(`${code} 无概念数据`, true);
+            clearConceptChart();
+            return;
+        }
+
+        // 2. 保持之前选中的概念（如果还在列表里），否则选第一个
+        let target = conceptState.active;
+        if (!concepts.includes(target)) target = concepts[0];
+        conceptState.active = target;
+        highlightConcept(target);
+
+        // 3. 加载该概念的 K 线
+        await loadConceptChart(target, start, end, myToken);
+
+    } catch (e) {
+        console.error(e);
+        setStatus("错误：" + e.message, true);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function clearConceptChart() {
+    candleSeries.setData([]);
+    candleSeries.setMarkers([]);
+    for (const k in overlaySeries) overlaySeries[k].setData([]);
+    rebuildPane("ind1", currentInd1Value, []);
+    rebuildPane("ind2", currentInd2Value, []);
+    rebuildPane("ind3", currentInd3Value, []);
+    chart.timeScale().fitContent();
+}
+
+async function loadConceptChart(conceptName, start, end, myToken) {
+    setStatus(`加载概念「${conceptName}」…`);
+
+    try {
+        // 指标集：overlay + BOLL + 所有 scope 允许的指标
+        const wanted = Array.from(new Set([
+            ...OVERLAY_KEYS,
+            ...BOLL_KEYS,
+            ...state.indicators
+                .filter(i => {
+                    const s = i.scope || "all";
+                    return s === "all" || s === "industry" || s === "concept";
+                })
+                .map(i => i.name),
+        ]));
+
+        const url = `/api/sector/concept/${encodeURIComponent(conceptName)}`
+                  + `?start=${start}&end=${end}&indicators=${wanted.join(",")}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({ detail: res.statusText }));
+            throw new Error(err.detail || `HTTP ${res.status}`);
+        }
+        const rows = await res.json();
+        if (myToken && myToken !== loadToken) return;
+
+        // 过滤 OHLC 异常行
+        state.rows = (rows || []).filter(r => {
+            const t = String(r.trade_date ?? "").slice(0, 10);
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return false;
+            return [r.open, r.high, r.low, r.close].every(v =>
+                v != null && Number.isFinite(Number(v)));
+        });
+
+        if (!state.rows.length) {
+            clearConceptChart();
+            setStatus(`概念「${conceptName}」该区间无数据`);
+            return;
+        }
+
+        candleSeries.setData(state.rows.map(r => ({
+            time: r.trade_date,
+            open: Number(r.open),
+            high: Number(r.high),
+            low:  Number(r.low),
+            close:Number(r.close),
+        })));
+        candleSeries.setMarkers([]);
+
+        applyOverlays();
+        applyPane("ind1", currentInd1Value);
+        applyPane("ind2", currentInd2Value);
+        applyPane("ind3", currentInd3Value);
+
+        chart.timeScale().fitContent();
+
+        const first = state.rows[0].trade_date;
+        const last  = state.rows[state.rows.length - 1].trade_date;
+        setStatus(`概念: ${conceptName} · ${state.rows.length} 个交易日 · ${first} ~ ${last}`);
+    } catch (e) {
+        console.error(e);
+        setStatus("错误：" + e.message, true);
+    }
+}
+
+// 侧栏点击切换
+document.getElementById("conceptList").addEventListener("click", async (e) => {
+    const item = e.target.closest(".cs-item");
+    if (!item || !item.dataset.name) return;
+    const name = item.dataset.name;
+    if (name === conceptState.active) return;
+
+    conceptState.active = name;
+    highlightConcept(name);
+
+    const start = document.getElementById("start").value;
+    const end = document.getElementById("end").value;
+    if (!start || !end) return;
+
+    await loadConceptChart(name, start, end, null);
 });

@@ -453,3 +453,95 @@ body { display: flex; flex-direction: column; }
 #chartWrap.amo-visible #chartOverlay {
   display: none;
 }
+/* ═══ 概念模式：左侧候选栏 + 右侧 K 线 ═══ */
+#chartWrap.concept-mode {
+  display: flex;
+  flex-direction: row;
+}
+
+#conceptSidebar {
+  flex: 0 0 220px;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.cs-header {
+  padding: 10px 14px;
+  color: var(--text-dim);
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  user-select: none;
+}
+.cs-count {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.cs-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* 暗色滚动条 */
+.cs-list::-webkit-scrollbar { width: 8px; }
+.cs-list::-webkit-scrollbar-track { background: transparent; }
+.cs-list::-webkit-scrollbar-thumb {
+  background: #2a2e39;
+  border-radius: 4px;
+  border: 2px solid var(--panel);
+}
+.cs-list::-webkit-scrollbar-thumb:hover { background: #3a3f4b; }
+
+.cs-item {
+  padding: 7px 14px;
+  font-size: 12px;
+  color: var(--text);
+  border-bottom: 1px solid #1c202b;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background .1s, color .1s;
+}
+.cs-item:hover {
+  background: #2a2e39;
+}
+.cs-item.active {
+  background: rgba(41,98,255,.15);
+  color: var(--accent);
+  border-left: 3px solid var(--accent);
+  padding-left: 11px;
+}
+
+/* chartArea 占满剩余空间 */
+#chartArea {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* 覆盖 #chart / overlay 原来的 absolute inset:0（现在相对 #chartArea） */
+#chartWrap.concept-mode #chartArea > #chart {
+  position: absolute;
+  inset: 0;
+}
+#chartWrap.concept-mode #chartArea > #chartOverlay,
+#chartWrap.concept-mode #chartArea > #drawCanvas {
+  position: absolute;
+  inset: 0;
+}
+
+/* 非 concept 模式：chartArea 直接占满 chartWrap */
+#chartWrap:not(.concept-mode) #chartArea {
+  position: absolute;
+  inset: 0;
+}

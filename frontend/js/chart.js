@@ -407,13 +407,21 @@ chart.subscribeCrosshairMove((param) => {
         }
     }
 
+    // ⭐ 概念模式显示概念名，其它模式显示股票代码
+    const displayCode = (typeof dataSource !== "undefined" && dataSource === "concept"
+                        && typeof conceptState !== "undefined" && conceptState.active)
+        ? conceptState.active
+        : document.getElementById("code").value;
+
     const codeVal = document.getElementById("code").value;
-    const nameVal = state.rows.find(r => r.code === codeVal)?.name
-                || (state.rows[0] && state.rows[0].name)
-                || "";
+    const nameVal = (typeof dataSource === "undefined" || dataSource !== "concept")
+        ? (state.rows.find(r => r.code === codeVal)?.name
+          || (state.rows[0] && state.rows[0].name) || "")
+        : "";
+
     legendEl.innerHTML =
         `<span class="row"><span class="val">${param.time}</span>` +
-        `<span style="color:var(--text-dim)">${codeVal}${nameVal ? " " + nameVal : ""}</span></span>` +
+        `<span style="color:var(--text-dim)">${displayCode}${nameVal ? " " + nameVal : ""}</span></span>` +
         `<span class="row ${cls}">` +
         `开 <span class="val">${fmtNum(candle.open)}</span>` +
         `高 <span class="val">${fmtNum(candle.high)}</span>` +
@@ -736,19 +744,30 @@ ddInd3.setValue(currentInd3Value, findLabel(currentInd3Value));
 // ─────────────── UI 模式切换 ───────────────
 
 function updateUIByDataSource() {
-const isConcept = dataSource === "concept";
+    const isConcept = dataSource === "concept";
+    const wrap = document.getElementById("chartWrap");
+    const sidebar = document.getElementById("conceptSidebar");
 
-document.getElementById("dateRangeGroup").style.display = isConcept ? "none" : "";
-document.getElementById("singleDateGroup").style.display = isConcept ? "" : "none";
-document.getElementById("overlayRow").style.display = isConcept ? "none" : "";
+    // 三个模式共用日期范围控件；单日期组永久隐藏
+    document.getElementById("dateRangeGroup").style.display = "";
+    document.getElementById("singleDateGroup").style.display = "none";
+    document.getElementById("overlayRow").style.display = "";
 
-if (isConcept) {
-    document.getElementById("chart").style.display = "none";
-    document.getElementById("conceptView").classList.add("show");
-    legendEl.style.display = "none";
-} else {
-    document.getElementById("chart").style.display = "";
-    document.getElementById("conceptView").classList.remove("show");
-    legendEl.style.display = "";
-}
+    if (isConcept) {
+        wrap.classList.add("concept-mode");
+        sidebar.style.display = "flex";
+        legendEl.style.display = "";
+    } else {
+        wrap.classList.remove("concept-mode");
+        sidebar.style.display = "none";
+        legendEl.style.display = "";
+    }
+
+    // 触发 resize（布局切换后图表要重新计算宽度）
+    setTimeout(() => {
+        chart.applyOptions({
+            width:  chartEl.clientWidth,
+            height: chartEl.clientHeight,
+        });
+    }, 50);
 }

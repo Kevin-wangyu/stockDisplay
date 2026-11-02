@@ -151,13 +151,23 @@ def _compute_top_amount_by_ratio(base_df, trade_date, market_total, topn=10):
 
     # ── 筛选 A > 10% ──
     filtered = df[df["amount_pct"] > 10.0].copy()
-    if filtered.empty:
-        logger.info(
-            "[top_amount] %s 无概念 A>10%%（最高 %.2f%%），回退按 A 降序取 TOP%d",
-            trade_date, float(df["amount_pct"].max()) if len(df) else 0.0, topn)
-        filtered = df
 
-    top = filtered.nlargest(topn, "norm_amount_ratio")
+    if len(filtered) >= topn:
+        top = filtered.nlargest(topn, "norm_amount_ratio")
+    elif not filtered.empty:
+        head = filtered.sort_values("norm_amount_ratio", ascending=False)
+        rest = df[~df.index.isin(filtered.index)].copy()
+        rest = rest.sort_values("norm_amount_ratio", ascending=False)
+        top = pd.concat(
+            [head, rest.head(topn - len(head))], ignore_index=False)
+        logger.info(
+            "[top_amount] %s A>10%% 只有 %d 个，按归成比补齐至 %d 个",
+            trade_date, len(head), len(top))
+    else:
+        logger.info(
+            "[top_amount] %s 无概念 A>10%%（最高 %.2f%%），全市场按归成比取 TOP%d",
+            trade_date, float(df["amount_pct"].max()) if len(df) else 0.0, topn)
+        top = df.nlargest(topn, "norm_amount_ratio")
 
     def _safe(v):
         if v is None:
@@ -170,6 +180,7 @@ def _compute_top_amount_by_ratio(base_df, trade_date, market_total, topn=10):
 
     rows = []
     for _, r in top.iterrows():
+        amount_pct = _safe(r["amount_pct"])
         rows.append({
             "code":  r["code"],
             "name":  r["name"],
@@ -177,10 +188,10 @@ def _compute_top_amount_by_ratio(base_df, trade_date, market_total, topn=10):
             "turnover_rate":    _safe(r["turnover_rate"]),
             "total_market_cap": _safe(r["total_market_cap"]),
             "pct_change":       _safe(r["pct_change"]),
-            # 新增字段（前端可选用）
-            "amount_pct":        _safe(r["amount_pct"]),       # A%
-            "cap_pct":           _safe(r["cap_pct"]),          # B%
-            "norm_amount_ratio": _safe(r["norm_amount_ratio"]), # 归成比
+            "amount_pct":        amount_pct,
+            "cap_pct":           _safe(r["cap_pct"]),
+            "norm_amount_ratio": _safe(r["norm_amount_ratio"]),
+            "is_strong": amount_pct > 10.0,   # ⭐ A>10% = 主线
         })
     return rows
 
@@ -250,6 +261,40 @@ def _get_tops_and_scores(trade_date: str):
 
     return market_total, top_amount, top_pct, top_limit_up, concept_scores
 
+def _compute_concept_colors(top_amount, top_pct, top_limit_up) -> dict[str, str]:
+    """计算概念颜色标签。
+
+    规则：
+      - red:    三榜共有 且 在某榜前5（最强主线）
+      - yellow: 三榜共有（不在任何榜前5）
+      - blue:   在某榜前5（不是三榜共有）
+      - white:  其余
+
+    返回 {cf_name: "red"|"yellow"|"blue"|"white"}
+    """
+    names_amount = {it["name"] for it in top_amount}      # TOP10
+    names_pct    = {it["name"] for it in top_pct}
+    names_lu     = {it["name"] for it in top_limit_up}
+
+    common3 = names_amount & names_pct & names_lu
+    top5 = (
+        {it["name"] for it in top_amount[:5]}
+        | {it["name"] for it in top_pct[:5]}
+        | {it["name"] for it in top_limit_up[:5]}
+    )
+
+    all_names = names_amount | names_pct | names_lu
+    colors = {}
+    for name in all_names:
+        if name in common3 and name in top5:
+            colors[name] = "red"
+        elif name in common3:
+            colors[name] = "yellow"
+        elif name in top5:
+            colors[name] = "blue"
+        else:
+            colors[name] = "white"
+    return colors
 
 
 # ── 重要性 ──
@@ -516,7 +561,9 @@ def get_concept_date_top10(trade_date: str) -> dict:
 
     picks = _load_cached_picks(trade_date) or []
 
-    result = {
+    concept_colors = _compute_concept_colors(top_amount, top_pct, top_limit_up)
+
+    return _json_safe({                              # ⭐ 兜底 nan / inf
         "trade_date": trade_date,
         "market_total_amount": market_total,
         "market_avg_5d":  _market_avg_amount(trade_date, 5),
@@ -526,8 +573,8 @@ def get_concept_date_top10(trade_date: str) -> dict:
         "top_limit_up": top_limit_up,
         "intersection_picks": picks,
         "picks_cached": bool(picks),
-    }
-    return _json_safe(result)   # ← 兜底
+        "concept_colors": concept_colors,
+    })
 
 
 
@@ -868,7 +915,8 @@ def get_limit_up_ladder(trade_date: str, min_days: int = 2) -> dict:
         })
 
     stocks.sort(key=lambda x: (-x["streak_days"], -x["importance_index"], x["code"]))
-    result = {"trade_date": trade_date, "stocks": stocks}
+    concept_colors = _compute_concept_colors(top_amount, top_pct, top_limit_up)
+    result = {"trade_date": trade_date, "stocks": stocks, "concept_colors": concept_colors}
     return _json_safe(result)
 
 

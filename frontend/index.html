@@ -94,24 +94,18 @@
   </div>
 
   <div id="chartWrap">
-    <div id="chart"></div>
-    <canvas id="chartOverlay"></canvas>
-    <canvas id="amoOverlay"></canvas>
-    <canvas id="drawCanvas"></canvas>
-
-    <div id="conceptView">
-      <div id="conceptBarPanel">
-        <div class="concept-bar-col" id="marketBarCol"></div>
-        <div class="concept-bar-col" id="stockBarCol"></div>
+      <div id="conceptSidebar" style="display:none">
+        <div class="cs-header">所属概念 <span id="csCount" class="cs-count"></span></div>
+        <div id="conceptList" class="cs-list"></div>
       </div>
-      <div id="conceptLower">
-        <div class="concept-picks-col" id="picksTop5Col"></div>
-        <div class="concept-picks-col" id="picksTop10Col"></div>
+      <div id="chartArea">
+        <div id="chart"></div>
+        <canvas id="chartOverlay"></canvas>
+        <canvas id="drawCanvas"></canvas>
       </div>
-    </div>
 
-    <div id="legend"></div>
-    <div id="missingWarning"></div>
+      <div id="legend"></div>
+      <div id="missingWarning"></div>
   </div>
 <script src="js/config.js"></script>
 <script src="js/chart.js"></script>

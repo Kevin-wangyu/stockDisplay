@@ -1,6 +1,55 @@
 // ─────────── 界面 1：三榜 + 交集选股 ───────────
 const v1SortState = { key: "importance_index", dir: "desc" };
 let v1LastPicks = [];
+// ─── 颜色状态（每榜独立 + 全局共有）───
+const V1_COLOR_ORDER = { red: 0, yellow: 1, blue: 2, white: 3 };
+
+let v1Common3 = new Set();        // 三榜共有
+let v1Top5Union = new Set();      // 各榜前5并集（仅供 tag 用）
+
+/** 从三榜数据算出 common3 + top5Union。 */
+function v1ComputeGlobalColors(topAmount, topPct, topLimitUp) {
+  const A = new Set((topAmount || []).map(it => it.name));
+  const P = new Set((topPct || []).map(it => it.name));
+  const L = new Set((topLimitUp || []).map(it => it.name));
+
+  v1Common3 = new Set(
+    [...A].filter(n => P.has(n) || L.has(n))
+  );
+  v1Top5Union = new Set([
+    ...(topAmount || []).slice(0, 5).map(it => it.name),
+    ...(topPct || []).slice(0, 5).map(it => it.name),
+    ...(topLimitUp || []).slice(0, 5).map(it => it.name),
+  ]);
+}
+
+/** 榜单行颜色：按【本榜前5】+【三榜共有】判定。 */
+function v1ColorForRow(name, rank) {
+  const inTop5 = rank < 5;
+  const inCommon = v1Common3.has(name);
+  if (inTop5 && inCommon) return "red";
+  if (inCommon) return "yellow";
+  if (inTop5) return "blue";
+  return "white";
+}
+
+/** tag 颜色（交集榜/天梯榜）：按【全局前5并集】+【三榜共有】判定。 */
+function v1ColorForTag(name) {
+  const inTop5 = v1Top5Union.has(name);
+  const inCommon = v1Common3.has(name);
+  if (inTop5 && inCommon) return "red";
+  if (inCommon) return "yellow";
+  if (inTop5) return "blue";
+  return "white";
+}
+
+function v1SortConcepts(cfs) {
+  return (cfs || []).slice().sort((a, b) => {
+    const ca = V1_COLOR_ORDER[v1ColorForTag(a)] ?? 3;
+    const cb = V1_COLOR_ORDER[v1ColorForTag(b)] ?? 3;
+    return ca - cb;
+  });
+}
 const v1El = {
   marketTotal:  document.getElementById("v1MarketTotal"),
   amountList:   document.getElementById("v1AmountList"),
@@ -63,7 +112,7 @@ function v1RenderList(el, items, opt) {
   }
   const maxAbs = Math.max(...items.map(it => Math.abs(opt.weight(it))), 1e-9);
 
-  el.innerHTML = items.map(it => {
+  el.innerHTML = items.map((it, idx) => {
     const w = Math.abs(opt.weight(it)) / maxAbs * 100;
     const inside = opt.inside(it) || "";
     const right  = opt.right(it)  || "";
@@ -74,7 +123,8 @@ function v1RenderList(el, items, opt) {
 
     return `
       <div class="v1-row">
-        <div class="v1-name" data-code="${v1Escape(it.code)}"
+        <div class="v1-name v1-cname-${v1ColorForRow(it.name, idx)}"
+             data-code="${v1Escape(it.code)}"
              data-name="${v1Escape(it.name)}"
              title="${v1Escape(it.name)}">${v1Escape(it.name)}</div>
         <div class="v1-track${opt.centerAxis ? " center-axis" : ""}">
@@ -87,6 +137,7 @@ function v1RenderList(el, items, opt) {
       </div>`;
   }).join("");
 }
+
 function v1RenderAmount(items, marketTotal) {
   if (!items || !items.length) {
     v1El.amountList.innerHTML = `<div class="v1-empty">无数据</div>`;
@@ -96,14 +147,19 @@ function v1RenderAmount(items, marketTotal) {
   const maxRatio = Math.max(
     ...items.map(it => it.norm_amount_ratio || 0), 1e-9);
 
-  v1El.amountList.innerHTML = items.map(it => {
+  v1El.amountList.innerHTML = items.map((it, idx) => {
     const ratio = it.norm_amount_ratio || 0;
     const w = (ratio / maxRatio * 100).toFixed(2);
     const amountPct = it.amount_pct != null
       ? it.amount_pct.toFixed(2) + "%" : "-";
     const amountStr = v1FmtYi(it.amount);
 
-    // 领涨股
+    // ⭐ 主线（A>10%）vs 补齐
+    const isStrong = it.is_strong !== false;
+    const cnameCls = isStrong ? v1ColorForRow(it.name, idx) : "white";
+    const rowCls = isStrong ? "" : "v1-row-weak";
+    const weakTag = isStrong ? "" : `<span class="v1-weak-tag">补</span>`;
+
     const lu = it.limit_up_count || 0;
     const top = it.top_stock;
     let leader = `<span class="v1-meta-none">—</span>`;
@@ -115,16 +171,16 @@ function v1RenderAmount(items, marketTotal) {
     }
 
     return `
-      <div class="v1-row v1-row-ratio">
+      <div class="v1-row v1-row-ratio ${rowCls}">
         <div class="v1-ratio" title="归成比 = 成交额占比 / 市值占比">
           <div class="v1-ratio-track">
             <div class="v1-ratio-fill" style="width:${w}%"></div>
           </div>
           <div class="v1-ratio-val">${ratio.toFixed(2)}</div>
         </div>
-        <div class="v1-name" data-code="${v1Escape(it.code)}"
+        <div class="v1-name v1-cname-${cnameCls}" data-code="${v1Escape(it.code)}"
              data-name="${v1Escape(it.name)}"
-             title="${v1Escape(it.name)}">${v1Escape(it.name)}</div>
+             title="${v1Escape(it.name)}">${v1Escape(it.name)}${weakTag}</div>
         <div class="v1-amount-pct" title="成交额占市场总成交额">${amountPct}</div>
         <div class="v1-right">${amountStr}</div>
         <div class="v1-meta">
@@ -134,6 +190,7 @@ function v1RenderAmount(items, marketTotal) {
       </div>`;
   }).join("");
 }
+
 function v1RenderPct(items) {
   v1RenderList(v1El.pctList, items, {
     weight:     (it) => it.pct_change,
@@ -143,6 +200,7 @@ function v1RenderPct(items) {
     centerAxis: true,
   });
 }
+
 function v1RenderLimitUp(items) {
   if (!items || !items.length) {
     v1El.limitUpList.innerHTML = `<div class="v1-empty">无数据</div>`;
@@ -150,7 +208,7 @@ function v1RenderLimitUp(items) {
   }
   const maxLu = Math.max(...items.map(it => it.limit_up_count || 0), 1);
 
-  v1El.limitUpList.innerHTML = items.map(it => {
+  v1El.limitUpList.innerHTML = items.map((it, idx) => {
     const lu = it.limit_up_count || 0;
     const w = (lu / maxLu * 100).toFixed(2);
     const top = it.top_stock;
@@ -161,9 +219,13 @@ function v1RenderLimitUp(items) {
       leader = `<span class="n" title="${v1Escape(top.name)}">${v1Escape(top.name)}</span>
                 <span class="p ${cls}">${pct}</span>`;
     }
+
+    // ⭐ 按本榜排名 + 三榜共有 判定颜色
+    const cnameCls = v1ColorForRow(it.name, idx);
+
     return `
       <div class="v1-row">
-        <div class="v1-name" data-code="${v1Escape(it.code)}"
+        <div class="v1-name v1-cname-${cnameCls}" data-code="${v1Escape(it.code)}"
              data-name="${v1Escape(it.name)}"
              title="${v1Escape(it.name)}">${v1Escape(it.name)}</div>
         <div class="v1-track">
@@ -177,6 +239,7 @@ function v1RenderLimitUp(items) {
       </div>`;
   }).join("");
 }
+
 function v1SortedPicks(picks) {
   const { key, dir } = v1SortState;
   const arr = picks.slice();
@@ -221,7 +284,7 @@ function v1RenderLadder(data) {
       <span data-key="streak_days" style="text-align:center">连板</span>
       <span data-key="code">代码</span>
       <span data-key="name">名称</span>
-      <span data-key="concepts">所属概念</span>
+      <span data-key="concepts">所属概念<span class="cfs-resize-handle" data-var="--ladder-cfs-w" title="拖动调整宽度">⋮</span></span>
       <span data-key="importance_index" style="text-align:right">重要性</span>
       <span data-key="close" style="text-align:right">收盘</span>
       <span data-key="pct_change" style="text-align:right">涨跌%</span>
@@ -245,11 +308,15 @@ function v1RenderLadder(data) {
 
   const MAX_SHOW = 5;
   const rowsHtml = stocks.map(s => {
-    const cfs = (s.concepts || []).slice(0, MAX_SHOW);
-    const more = (s.concepts || []).length - cfs.length;
+    const sortedCfs = v1SortConcepts(s.concepts || []);
+    const cfs = sortedCfs.slice(0, MAX_SHOW);
+    const more = sortedCfs.length - cfs.length;
     const tags =
-      cfs.map(c => `<span class="v1-pick-cf">${v1Escape(c)}</span>`).join("")
-      + (more > 0 ? `<span class="v1-pick-cf more">+${more}</span>` : "");
+      cfs.map(c => {
+        const color = v1ColorForTag(c);
+        return `<span class="v1-ladder-cf cf-${color}">${v1Escape(c)}</span>`;
+      }).join("")
+      + (more > 0 ? `<span class="v1-ladder-cf more">+${more}</span>` : "");
     const titleAll = (s.concepts || []).join("、");
 
     const cls = (v) => v == null ? "" : (v >= 0 ? "up" : "down");
@@ -297,7 +364,7 @@ function v1RenderPicks(picks) {
       <span>#</span>
       <span data-key="code">代码</span>
       <span data-key="name">名称</span>
-      <span data-key="match_count">命中概念</span>
+      <span data-key="match_count">命中概念<span class="cfs-resize-handle" data-var="--picks-cfs-w" title="拖动调整宽度">⋮</span></span>
       <span data-key="match_count" style="text-align:center">×N</span>
       <span data-key="importance_index" style="text-align:right">重要性</span>
       <span data-key="close" style="text-align:right">收盘</span>
@@ -322,11 +389,14 @@ function v1RenderPicks(picks) {
 
   const MAX_SHOW = 8;
   const rowsHtml = sorted.map((p, i) => {
-    const cfs = p.matched_concepts || [];
+    const cfs = v1SortConcepts(p.matched_concepts || []);
     const shown = cfs.slice(0, MAX_SHOW);
     const more = cfs.length - shown.length;
     const tags =
-      shown.map(c => `<span class="v1-pick-cf">${v1Escape(c)}</span>`).join("")
+      shown.map(c => {
+        const color = v1ColorForTag(c);
+        return `<span class="v1-pick-cf cf-${color}">${v1Escape(c)}</span>`;
+      }).join("")
       + (more > 0 ? `<span class="v1-pick-cf more">+${more}</span>` : "");
     const titleAll = cfs.join("、");
 
@@ -401,7 +471,11 @@ async function loadView1() {
     if (avg20El) avg20El.textContent =
       ((data.market_avg_20d || 0) / 1e8).toFixed(2) + " 亿";
 
-    // 三榜
+    // ⭐ 前端自算（绕过 lru_cache 旧缓存问题，永远和榜单同步）
+    // ⭐ 前端自算（common3 + top5Union）
+    v1ComputeGlobalColors(data.top_amount, data.top_pct, data.top_limit_up);
+    console.log("[colors] common3:", [...v1Common3]);
+    console.log("[colors] top5Union:", [...v1Top5Union]);
     v1RenderAmount(data.top_amount || [], data.market_total_amount || 0);
     v1RenderPct(data.top_pct || []);
     v1RenderLimitUp(data.top_limit_up || []);
@@ -512,6 +586,7 @@ document.addEventListener("click", (e) => {
 });
 // ─── 天梯榜点代码/名称 → 新窗口 index.html（用 data-code 而不是文本） ───
 document.addEventListener("click", (e) => {
+  if (e.target.closest(".cfs-resize-handle")) return;
   const cell = e.target.closest(".v1-ladder-code, .v1-ladder-name");
   if (!cell) return;
   const code = cell.dataset.code;
@@ -523,6 +598,7 @@ document.addEventListener("click", (e) => {
 });
 // ─── 交集榜表头点击排序（capture 阶段） ───
 document.addEventListener("click", (e) => {
+  if (e.target.closest(".cfs-resize-handle")) return;
   const head = e.target.closest(".v1-picks-head > span[data-key]");
   if (!head) return;
   e.stopPropagation();
@@ -578,3 +654,56 @@ document.addEventListener("click", (e) => {
     document.body.style.cursor = "";
   });
 })();
+
+// ─── 概念列拖拽手柄（document 委托，重建后也生效）───
+// ─── 概念列拖拽手柄（document 委托，重建后也生效）───
+document.addEventListener("mousedown", (e) => {
+  const handle = e.target.closest(".cfs-resize-handle");
+  if (!handle) return;
+
+  e.preventDefault();
+  e.stopPropagation();
+
+  const varName = handle.dataset.var;
+  if (!varName) return;
+
+  const curW = parseInt(
+    getComputedStyle(document.documentElement).getPropertyValue(varName)
+  ) || parseInt(getComputedStyle(handle.closest(".v1-picks-head, .v1-ladder-head"))
+                  ?.gridTemplateColumns?.split(" ")[3]) || 170;
+
+  const startX = e.clientX;
+  let moved = false;
+
+  document.body.style.userSelect = "none";
+  document.body.style.cursor = "col-resize";
+
+  const onMove = (ev) => {
+    const dx = ev.clientX - startX;
+    if (Math.abs(dx) > 2) moved = true;
+    const w = Math.max(80, Math.min(600, curW + dx));
+    document.documentElement.style.setProperty(varName, w + "px");
+  };
+
+  const onUp = () => {
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+    document.body.style.userSelect = "";
+    document.body.style.cursor = "";
+
+    // ⭐ 拖拽过就抑制后续 click（防止触发排序）
+    if (moved) {
+      const stopClick = (ce) => {
+        ce.stopPropagation();
+        ce.preventDefault();
+      };
+      document.addEventListener("click", stopClick, true);
+      setTimeout(() => {
+        document.removeEventListener("click", stopClick, true);
+      }, 100);
+    }
+  };
+
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+});
