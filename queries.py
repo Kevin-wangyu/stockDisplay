@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import Iterable, Sequence
 from datetime import date
 from trading_calendar import trading_days
@@ -81,11 +82,15 @@ DAILY_PCT_GLOB = _make_glob("daily_pct")
 AMO_GLOB = _make_glob("amo_components")
 
 def _make_glob_raw(kind: str) -> str:
-    """原始 data 分区 glob，增量函数专用（读最新写入的日分区）。"""
+    """增量函数专用：只读 data/ 日分区（全保留，hive 分区格式）。
+
+    不混读 compact，避免 hive partition mismatch。
+    """
     data_dir = BASE_DIR / "data" / kind
     return f"'{str(data_dir / '**' / '*.parquet').replace(chr(92), '/')}'"
 
-# 增量函数用 raw（读 data/）
+
+# 增量函数用 raw（只读 data/）
 QUOTE_RAW_GLOB      = _make_glob_raw("quote")
 DAILY_PCT_RAW_GLOB  = _make_glob_raw("daily_pct")
 INDUSTRY_RAW_GLOB   = _make_glob_raw("industry_flow")
@@ -170,12 +175,26 @@ def rebuild_market_amount() -> int:
         r = _q_fetchone(
             f"""
             SELECT SUM(amount) AS total
-            FROM read_parquet({INDUSTRY_RAW_GLOB}, hive_partitioning=true)
+            FROM read_parquet({INDUSTRY_GLOB}, hive_partitioning=false, union_by_name=true)
             WHERE trade_date = ?
             """,
             [d],
         )
-        total = float(r[0]) if r and r[0] is not None else 0.0
+        total = 0.0
+        if r and r[0] is not None:
+            try:
+                v = float(r[0])
+                if math.isfinite(v) and v > 0:
+                    total = v
+            except (TypeError, ValueError):
+                pass
+
+        if total <= 0:
+            logger.warning(
+                "[market_amount] %s 无成交额数据（data/ 缺分区或已归档），跳过不写",
+                d)
+            continue
+
         rows.append({"trade_date": d, "total_amount": total})
 
     new_df = pd.DataFrame(rows)
@@ -293,17 +312,102 @@ def _limit_up_threshold(code: str) -> float:
 
 
 def _clean_concept_rows(df):
+    """转 records，同时把 inf/nan 转 0.0，防止 JSON 序列化崩溃。"""
+    def _safe(v):
+        if v is None:
+            return 0.0
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return 0.0
+        return f if math.isfinite(f) else 0.0
+
     out = []
     for _, r in df.iterrows():
         out.append({
             "code":  r["code"],
             "name":  r["name"],
-            "amount":           float(r["amount"])           if pd.notna(r["amount"])           else 0.0,
-            "turnover_rate":    float(r["turnover_rate"])    if pd.notna(r["turnover_rate"])    else 0.0,
-            "total_market_cap": float(r["total_market_cap"]) if pd.notna(r["total_market_cap"]) else 0.0,
-            "pct_change":       float(r["pct_change"])       if pd.notna(r["pct_change"])       else 0.0,
+            "amount":           _safe(r["amount"]),
+            "turnover_rate":    _safe(r["turnover_rate"]),
+            "total_market_cap": _safe(r["total_market_cap"]),
+            "pct_change":       _safe(r["pct_change"]),
         })
     return out
+
+def _compute_top_amount_by_ratio(base_df, trade_date, market_total, topn=10):
+    """成交额榜：按归成比（A/B）降序，仅取 A > 10% 的概念。
+
+    A = 该概念成交额 / 市场总成交额 × 100（%）
+    B = 该概念自由流通市值 / 市场总流通市值 × 100（%）
+    归成比 = A / B（消除市值占比影响）
+    """
+    import math
+
+    # ── 市场总流通市值（industry_flow 当日 SUM(total_market_cap)）──
+    row = _q_fetchone(
+        f"""
+        SELECT SUM(total_market_cap) AS total_cap
+        FROM read_parquet({INDUSTRY_GLOB}, hive_partitioning=true, union_by_name=true)
+        WHERE trade_date = ?
+        """, [trade_date])
+
+    market_cap = 0.0
+    if row and row[0] is not None:
+        try:
+            v = float(row[0])
+            if math.isfinite(v):
+                market_cap = v
+        except (TypeError, ValueError):
+            pass
+
+    if market_cap <= 0 or market_total <= 0:
+        logger.warning(
+            "[top_amount] %s 缺少 market_cap=%.0f / market_total=%.0f，"
+            "回退成交额排序", trade_date, market_cap, market_total)
+        return _clean_concept_rows(base_df.nlargest(topn, "amount"))
+
+    df = base_df.copy()
+    df["amount_pct"] = pd.to_numeric(df["amount"], errors="coerce").fillna(0.0) / market_total * 100.0
+    df["cap_pct"]    = pd.to_numeric(df["total_market_cap"], errors="coerce").fillna(0.0) / market_cap * 100.0
+    df["norm_amount_ratio"] = df.apply(
+        lambda r: r["amount_pct"] / r["cap_pct"] if r["cap_pct"] > 0 else 0.0,
+        axis=1,
+    )
+
+    # ── 筛选 A > 10% ──
+    filtered = df[df["amount_pct"] > 10.0].copy()
+    if filtered.empty:
+        logger.info(
+            "[top_amount] %s 无概念 A>10%%（最高 %.2f%%），回退按 A 降序取 TOP%d",
+            trade_date, float(df["amount_pct"].max()) if len(df) else 0.0, topn)
+        filtered = df
+
+    top = filtered.nlargest(topn, "norm_amount_ratio")
+
+    def _safe(v):
+        if v is None:
+            return 0.0
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return 0.0
+        return f if math.isfinite(f) else 0.0
+
+    rows = []
+    for _, r in top.iterrows():
+        rows.append({
+            "code":  r["code"],
+            "name":  r["name"],
+            "amount":           _safe(r["amount"]),
+            "turnover_rate":    _safe(r["turnover_rate"]),
+            "total_market_cap": _safe(r["total_market_cap"]),
+            "pct_change":       _safe(r["pct_change"]),
+            # 新增字段（前端可选用）
+            "amount_pct":        _safe(r["amount_pct"]),       # A%
+            "cap_pct":           _safe(r["cap_pct"]),          # B%
+            "norm_amount_ratio": _safe(r["norm_amount_ratio"]), # 归成比
+        })
+    return rows
 
 def _compute_top_limit_up(base_df, trade_date, topn=10):
     """按涨停数降序取 TOP10；不足用成交额补齐。向量化。"""
@@ -353,7 +457,7 @@ def _load_alias_map():
     if not CONCEPT_ALIAS_FILE.exists():
         return {}
     df = _q_df(
-        f"SELECT cf_name, map_name FROM read_parquet({CONCEPT_ALIAS_FILE})"
+        f"SELECT cf_name, map_name FROM read_parquet('{CONCEPT_ALIAS_FILE}')"
     )
     return {r["cf_name"]: r["map_name"]
             for _, r in df.iterrows() if r["map_name"]}
@@ -419,7 +523,7 @@ def _load_alias_reverse():
     if not CONCEPT_ALIAS_FILE.exists():
         return {}
     df = _q_df(
-        f"SELECT cf_name, map_name FROM read_parquet({CONCEPT_ALIAS_FILE})"
+        f"SELECT cf_name, map_name FROM read_parquet('{CONCEPT_ALIAS_FILE}')"
     )
     return {r["map_name"]: r["cf_name"]
             for _, r in df.iterrows() if r["map_name"]}
@@ -427,17 +531,30 @@ def _load_alias_reverse():
 
 @lru_cache(maxsize=256)
 def _load_pct_today(trade_date: str):
-    """当日全市场 pct_change：优先热分区，其次冷年文件，最后降级兜底。"""
+    """当日全市场 pct_change：优先热分区，其次冷月文件，最后降级兜底。
+    所有非有限值（inf/nan）一律丢弃，防止 JSON 序列化崩溃。
+    """
+    import math
+
+    def _clean_map(df):
+        out = {}
+        for _, r in df.iterrows():
+            try:
+                v = float(r["pct_change"])
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(v):
+                out[r["code"]] = v
+        return out
+
     # 1. 热数据（按日分区）
     pdir = DAILY_PCT_DIR / f"trade_date={trade_date}"
     path = pdir / "part.parquet"
 
     if path.exists():
         df = pd.read_parquet(path, columns=["code", "pct_change"])
-        return {r["code"]: float(r["pct_change"])
-                for _, r in df.iterrows() if pd.notna(r["pct_change"])}
+        return _clean_map(df)
 
-    # 2. 冷数据（按年合并）
     # 2. 冷数据（按月合并）
     month = trade_date[:7]
     month_file = COMPACT_ROOT / "daily_pct" / f"{month}.parquet"
@@ -448,8 +565,7 @@ def _load_pct_today(trade_date: str):
             [trade_date],
         )
         if not df.empty:
-            return {r["code"]: float(r["pct_change"])
-                    for _, r in df.iterrows() if pd.notna(r["pct_change"])}
+            return _clean_map(df)
 
     # 3. 降级：目录存在但 part 文件名不对 → glob 兜底
     if pdir.exists():
@@ -460,8 +576,7 @@ def _load_pct_today(trade_date: str):
                 trade_date, alts[0].name,
             )
             df = pd.read_parquet(alts[0], columns=["code", "pct_change"])
-            return {r["code"]: float(r["pct_change"])
-                    for _, r in df.iterrows() if pd.notna(r["pct_change"])}
+            return _clean_map(df)
 
     # 4. 最后兜底：走单文件
     if DAILY_PCT_FILE.exists():
@@ -473,11 +588,9 @@ def _load_pct_today(trade_date: str):
             DAILY_PCT_FILE, columns=["code", "trade_date", "pct_change"])
         df["trade_date"] = df["trade_date"].astype(str).str.slice(0, 10)
         df = df[df["trade_date"] == trade_date]
-        return {r["code"]: float(r["pct_change"])
-                for _, r in df.iterrows() if pd.notna(r["pct_change"])}
-                
-    return {}
+        return _clean_map(df)
 
+    return {}
 def _enrich_with_stocks(lists, trade_date):
     """三榜里每个概念附加 limit_up_count / top_stock（原地修改）。"""
     code_info, cf2codes = _load_stock_index_by_date(trade_date)
@@ -496,9 +609,15 @@ def _enrich_with_stocks(lists, trade_date):
                      if p >= _limit_up_threshold(c))
             top = max(matched, key=lambda x: x[2]) if matched else None
             it["limit_up_count"] = lu
-            it["top_stock"] = (
-                {"code": top[0], "name": top[1], "pct": top[2]} if top else None
-            )
+            if top:
+                pct_val = float(top[2])
+                if not math.isfinite(pct_val):
+                    pct_val = 0.0
+                it["top_stock"] = {
+                    "code": top[0], "name": top[1], "pct": pct_val,
+                }
+            else:
+                it["top_stock"] = None
 # ───────────────────────── 交集榜单 Parquet 缓存 ─────────────────────────
 
 def _picks_cache_path(trade_date: str) -> Path:
@@ -581,7 +700,7 @@ def _get_tops_and_scores(trade_date: str):
     if base.empty:
         raise ValueError(f"{trade_date} 无概念数据")
 
-    top_amount   = _clean_concept_rows(base.nlargest(10, "amount"))
+    top_amount   = _compute_top_amount_by_ratio(base, trade_date, market_total, topn=10)
     top_pct      = _clean_concept_rows(base.nlargest(10, "pct_change"))
     top_limit_up = _compute_top_limit_up(base, trade_date, topn=10)
 
@@ -594,64 +713,90 @@ def _get_tops_and_scores(trade_date: str):
 def _compute_concept_scores(top_amount, top_pct, top_limit_up,
                             trade_date, market_total):
     """
-    每个维度 = 0.5 × 排名分 + 0.5 × 数值分
-    权重：成交额 0.35 / 涨幅 0.30 / 涨停数 0.35
+    基于新三榜（归成比 / 涨跌幅 / 涨停数）的概念重要性分。
+
+    每维度 = 0.5 × 排名分 + 0.5 × 数值分
+    权重：归成比 0.40 / 涨停数 0.35 / 涨跌幅 0.25
+    加成：多榜命中 × (1 + 0.2 × (命中数-1))
+    归一化：max_score → 1.0
+    幂次：score ^ 0.8（拉开中低部）
     """
-    rank_amt = {it["name"]: i + 1 for i, it in enumerate(top_amount)}
-    rank_pct = {it["name"]: i + 1 for i, it in enumerate(top_pct)}
-    rank_lu  = {it["name"]: i + 1 for i, it in enumerate(top_limit_up)}
+    rank_ratio = {it["name"]: i + 1 for i, it in enumerate(top_amount)}
+    rank_pct   = {it["name"]: i + 1 for i, it in enumerate(top_pct)}
+    rank_lu    = {it["name"]: i + 1 for i, it in enumerate(top_limit_up)}
 
-    max_amount = max((it["amount"] for it in top_amount), default=0)
-    max_pct_pos = max((it["pct_change"] for it in top_pct
-                       if it["pct_change"] > 0), default=0)
-    max_lu = max((it.get("limit_up_count", 0) for it in top_limit_up), default=0)
+    ratio_map = {it["name"]: float(it.get("norm_amount_ratio", 0) or 0)
+                 for it in top_amount}
+    pct_map   = {it["name"]: float(it.get("pct_change", 0) or 0)
+                 for it in top_pct}
+    lu_map    = {it["name"]: int(it.get("limit_up_count", 0) or 0)
+                 for it in top_limit_up}
 
-    all_data = {}
-    for lst in (top_amount, top_pct, top_limit_up):
-        for it in lst:
-            all_data.setdefault(it["name"], {}).update(it)
+    max_ratio   = max(ratio_map.values(), default=0.0)
+    max_pct_pos = max((v for v in pct_map.values() if v > 0), default=0.0)
+    max_lu      = max(lu_map.values(), default=0)
 
-    all_cfs = set(rank_amt) | set(rank_pct) | set(rank_lu)
-    scores = {}
+    all_cfs = set(rank_ratio) | set(rank_pct) | set(rank_lu)
+
+    # ── 第一轮：算 base score ──
+    raw_scores = {}
     for cf in all_cfs:
-        data = all_data.get(cf, {})
+        ratio_rank = (11 - rank_ratio[cf]) / 10 if cf in rank_ratio else 0.0
+        ratio_raw  = ratio_map.get(cf, 0.0)
+        ratio_val  = ratio_raw / max_ratio if max_ratio > 0 else 0.0
+        ratio_part = 0.5 * ratio_rank + 0.5 * ratio_val
 
-        # 成交额
-        amt_rank = (11 - rank_amt[cf]) / 10 if cf in rank_amt else 0.0
-        amt_val_raw = data.get("amount", 0)
-        amt_val = amt_val_raw / max_amount if max_amount > 0 else 0.0
-        amt_part = 0.5 * amt_rank + 0.5 * amt_val
-
-        # 涨幅
-        pct_rank = 0.0
-        pct_val = 0.0
-        pct_raw = data.get("pct_change", 0)
-        if pct_raw > 0:
-            pct_rank = (11 - rank_pct[cf]) / 10 if cf in rank_pct else 0.0
-            pct_val = pct_raw / max_pct_pos if max_pct_pos > 0 else 0.0
-        pct_part = 0.5 * pct_rank + 0.5 * pct_val
-
-        # 涨停数（排名 + 数值）
         lu_rank = (11 - rank_lu[cf]) / 10 if cf in rank_lu else 0.0
-        lu_val_raw = data.get("limit_up_count", 0)
-        lu_val = lu_val_raw / max_lu if max_lu > 0 else 0.0
+        lu_raw  = lu_map.get(cf, 0)
+        lu_val  = lu_raw / max_lu if max_lu > 0 else 0.0
         lu_part = 0.5 * lu_rank + 0.5 * lu_val
 
-        score = 0.35 * amt_part + 0.30 * pct_part + 0.35 * lu_part
+        pct_rank = 0.0
+        pct_val  = 0.0
+        pct_raw  = pct_map.get(cf, 0.0)
+        if pct_raw > 0:
+            pct_rank = (11 - rank_pct[cf]) / 10 if cf in rank_pct else 0.0
+            pct_val  = pct_raw / max_pct_pos if max_pct_pos > 0 else 0.0
+        pct_part = 0.5 * pct_rank + 0.5 * pct_val
 
-        scores[cf] = {
-            "score": round(score, 4),
+        base = 0.40 * ratio_part + 0.35 * lu_part + 0.25 * pct_part
+
+        # 多榜命中加成：1榜=1.0, 2榜=1.2, 3榜=1.4
+        hit = sum(1 for rk in (rank_ratio, rank_lu, rank_pct) if cf in rk)
+        multi_bonus = 1.0 + 0.20 * (hit - 1)
+        raw = base * multi_bonus
+
+        raw_scores[cf] = {
+            "raw": raw,
             "parts": {
-                "amount": round(amt_part, 3),
-                "pct": round(pct_part, 3),
+                "ratio":   round(ratio_part, 3),
                 "limitup": round(lu_part, 3),
+                "pct":     round(pct_part, 3),
+                "hit":     hit,
             },
         }
-    return scores
 
+    # ── 第二轮：归一化 + 幂次拉开 ──
+    max_raw = max(v["raw"] for v in raw_scores.values()) if raw_scores else 0.0
+    scores = {}
+    for cf, v in raw_scores.items():
+        if max_raw > 0:
+            normalized = v["raw"] / max_raw      # 0 ~ 1
+            stretched  = normalized ** 0.8       # 拉开中低部
+        else:
+            stretched = 0.0
+        scores[cf] = {
+            "score": round(stretched, 4),
+            "parts": v["parts"],
+        }
+    return scores
 def _build_intersection_picks(top_amount, top_pct, top_limit_up,
-                              trade_date, market_total, topn=20):
-    """三榜并集 → 每只股票命中几个概念，取前 topn。向量化版本。"""
+                              trade_date, market_total, concept_scores,
+                              topn=40):
+    """三榜并集 → 每只股票命中概念 → 按重要性排序取 topn。
+
+    importance = mean(matched_concept_scores) × match_count^0.3
+    """
     from datetime import date as _date, timedelta as _td
 
     seen, cf_ordered = set(), []
@@ -669,8 +814,7 @@ def _build_intersection_picks(top_amount, top_pct, top_limit_up,
     code_info, _ = _load_stock_index_by_date(trade_date)
     pct_today = _load_pct_today(trade_date)
 
-    # ── 向量化：先用 list comprehension 收集，再用 dict 聚合 ──
-    hits = {}    # code -> [cf1, cf2, ...]
+    hits = {}
     for code, (name, cs) in code_info.items():
         matched = cs & target_set
         if matched:
@@ -683,14 +827,33 @@ def _build_intersection_picks(top_amount, top_pct, top_limit_up,
     for code, matched in hits.items():
         name = code_info[code][0]
         matched_sorted = sorted(matched, key=lambda x: order.get(x, 999))
+        m = len(matched_sorted)
+
+        # ── 重要性：mean × n^0.3 ──
+        if m > 0:
+            scores = [concept_scores.get(c, {}).get("score", 0.0)
+                      for c in matched_sorted]
+            mean_score = sum(scores) / m
+            base_importance = mean_score * (m ** 0.4)
+
+            # 龙头加成：命中"分数 >= 0.8 的顶级概念" → +20%
+            has_leader = any(s >= 0.8 for s in scores)
+            importance = base_importance * (1.20 if has_leader else 1.0)
+        else:
+            importance = 0.0
+
         picks.append({
             "code": code,
             "name": name,
-            "match_count": len(matched_sorted),
+            "match_count": m,
             "matched_concepts": matched_sorted,
+            "importance_index": round(importance, 2),
         })
 
-    picks.sort(key=lambda x: (-x["match_count"], x["code"]))
+    # ── 按重要性降序（同分按命中数降序） ──
+    picks.sort(key=lambda x: (-x["importance_index"],
+                              -x["match_count"],
+                              x["code"]))
     picks = picks[:topn]
     if not picks:
         return []
@@ -738,7 +901,13 @@ def _build_intersection_picks(top_amount, top_pct, top_limit_up,
                 fmap[(r["code"], n)] = r["close"]
 
     def _num(x):
-        return float(x) if pd.notna(x) else None
+        if x is None or not pd.notna(x):
+            return None
+        try:
+            f = float(x)
+        except (TypeError, ValueError):
+            return None
+        return f if math.isfinite(f) else None
 
     def _norm(net, amount, trate):
         if net is None or amount is None or trate is None or amount == 0:
@@ -799,18 +968,22 @@ def _market_avg_amount(trade_date: str, days: int) -> float:
             ORDER BY trade_date DESC LIMIT ?
         )
         """, [trade_date, days])
-    return float(row[0]) if row and row[0] is not None else 0.0
+    if not row or row[0] is None:
+        return 0.0
+    try:
+        f = float(row[0])
+    except (TypeError, ValueError):
+        return 0.0
+    return f if math.isfinite(f) else 0.0
 
 @lru_cache(maxsize=32)
 def get_concept_date_top10(trade_date: str) -> dict:
-    """三榜 + 交集榜（纯读缓存，< 100ms）。"""
     market_total, top_amount, top_pct, top_limit_up, _ = \
         _get_tops_and_scores(trade_date)
 
-    # picks：纯读 parquet 缓存，没有就空（不现场算）
     picks = _load_cached_picks(trade_date) or []
 
-    return {
+    result = {
         "trade_date": trade_date,
         "market_total_amount": market_total,
         "market_avg_5d":  _market_avg_amount(trade_date, 5),
@@ -821,7 +994,16 @@ def get_concept_date_top10(trade_date: str) -> dict:
         "intersection_picks": picks,
         "picks_cached": bool(picks),
     }
-
+    return _json_safe(result)   # ← 兜底
+def _json_safe(obj):
+    """递归把 inf/nan 转 None，防止 json.dumps 崩溃。"""
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_json_safe(x) for x in obj]
+    return obj
 # ───────────────────────── 内部工具 ─────────────────────────
 
 def _dedup(seq: Iterable[str]) -> list[str]:
@@ -1421,7 +1603,7 @@ def _resolve_map_name(cf_name: str) -> str | None:
     if not CONCEPT_ALIAS_FILE.exists():
         return cf_name  # 别名表没建好时降级为原样匹配
     row = _q_fetchone(
-        f"SELECT map_name FROM read_parquet({CONCEPT_ALIAS_FILE}) "
+        f"SELECT map_name FROM read_parquet('{CONCEPT_ALIAS_FILE}') "
         f"WHERE cf_name = ?", [cf_name]
     )
     return row[0] if row and row[0] else None
@@ -1461,11 +1643,11 @@ def get_concept_limit_up_stocks(
         "name": [code_info[c][0] for c in codes_of_concept],
     })
     if stocks_df.empty:
-        return {
+        return _json_safe({
             "concept_code": concept_code, "concept_name": cf_name,
             "window_start": window_start, "window_end": window_end,
             "stocks": [],
-        }
+        })
     codes = stocks_df["code"].tolist()
     ph = ",".join(["?"] * len(codes))
 
@@ -1490,11 +1672,11 @@ def get_concept_limit_up_stocks(
                 hit[code] = d
 
     if not hit:
-        return {
+        return _json_safe({
             "concept_code": concept_code, "concept_name": cf_name,
             "window_start": window_start, "window_end": window_end,
             "stocks": [],
-        }
+        })
 
     # 7. 组装最终列表（带当日行情 + 资金流）
     hit_codes = list(hit.keys())
@@ -1511,13 +1693,19 @@ def get_concept_limit_up_stocks(
     qmap = {r["code"]: r for _, r in quote_df.iterrows()}
 
     name_df = _q_df(
-        f"SELECT code, name FROM read_parquet({MAP_FILE}) WHERE code IN ({ph2})",
+        f"SELECT code, name FROM read_parquet('{MAP_FILE}') WHERE code IN ({ph2})",
         hit_codes,
     )
     name_by_code = dict(zip(name_df["code"], name_df["name"]))
 
     def _num(x):
-        return float(x) if pd.notna(x) else None
+        if x is None or not pd.notna(x):
+            return None
+        try:
+            f = float(x)
+        except (TypeError, ValueError):
+            return None
+        return f if math.isfinite(f) else None
 
     def _norm(net, amount, trate):
         if net is None or amount is None or trate is None or amount == 0:
@@ -1572,11 +1760,11 @@ def get_concept_limit_up_stocks(
     stocks.sort(key=lambda x: (-(x["pct_change"] if x["pct_change"] is not None else -1e18),
                                x["code"]))
 
-    return {
+    return _json_safe({
         "concept_code": concept_code, "concept_name": cf_name,
         "window_start": window_start, "window_end": window_end,
         "stocks": stocks,
-    }
+    })
 
 _CN_NUM = {2: "二", 3: "三", 4: "四", 5: "五", 6: "六",
            7: "七", 8: "八", 9: "九", 10: "十"}
@@ -1827,7 +2015,13 @@ def get_limit_up_ladder(trade_date: str, min_days: int = 2) -> dict:
                 fmap[(r["code"], n)] = r["close"]
 
     def _num(x):
-        return float(x) if pd.notna(x) else None
+        if x is None or not pd.notna(x):
+            return None
+        try:
+            f = float(x)
+        except (TypeError, ValueError):
+            return None
+        return f if math.isfinite(f) else None
 
     def _norm(net, amount, trate):
         if net is None or amount is None or trate is None or amount == 0:
@@ -1845,10 +2039,12 @@ def get_limit_up_ladder(trade_date: str, min_days: int = 2) -> dict:
         if m > 0:
             scores = [concept_scores.get(c, {}).get("score", 0.0)
                       for c in matched]
-            importance = (sum(scores) / m) * (m ** 0.3)
+            mean_score = sum(scores) / m
+            base_importance = mean_score * (m ** 0.4)
+            has_leader = any(s >= 0.8 for s in scores)
+            importance = base_importance * (1.20 if has_leader else 1.0)
         else:
             importance = 0.0
-
         r = qmap.get(code)
         if r is None:
             stocks.append({
@@ -1901,7 +2097,8 @@ def get_limit_up_ladder(trade_date: str, min_days: int = 2) -> dict:
         })
 
     stocks.sort(key=lambda x: (-x["streak_days"], -x["importance_index"], x["code"]))
-    return {"trade_date": trade_date, "stocks": stocks}
+    result = {"trade_date": trade_date, "stocks": stocks}
+    return _json_safe(result)
 def get_trading_days_around(center: str, before: int = 400, after: int = 0) -> dict:
     """以 center（含）为基准，返回前后各 N 个交易日的起止日期（clamp 到数据范围）。"""
     from datetime import date as _date, timedelta as _td

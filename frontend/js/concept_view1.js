@@ -88,13 +88,51 @@ function v1RenderList(el, items, opt) {
   }).join("");
 }
 function v1RenderAmount(items, marketTotal) {
-  v1RenderList(v1El.amountList, items, {
-    weight:    (it) => it.amount,
-    fillClass: ()   => "fill-amount",
-    inside:    (it) => marketTotal > 0
-      ? (it.amount / marketTotal * 100).toFixed(2) + "%" : "",
-    right:     (it) => v1FmtYi(it.amount),
-  });
+  if (!items || !items.length) {
+    v1El.amountList.innerHTML = `<div class="v1-empty">无数据</div>`;
+    return;
+  }
+
+  const maxRatio = Math.max(
+    ...items.map(it => it.norm_amount_ratio || 0), 1e-9);
+
+  v1El.amountList.innerHTML = items.map(it => {
+    const ratio = it.norm_amount_ratio || 0;
+    const w = (ratio / maxRatio * 100).toFixed(2);
+    const amountPct = it.amount_pct != null
+      ? it.amount_pct.toFixed(2) + "%" : "-";
+    const amountStr = v1FmtYi(it.amount);
+
+    // 领涨股
+    const lu = it.limit_up_count || 0;
+    const top = it.top_stock;
+    let leader = `<span class="v1-meta-none">—</span>`;
+    if (top) {
+      const pct = (top.pct >= 0 ? "+" : "") + top.pct.toFixed(2) + "%";
+      const cls = top.pct >= 0 ? "up" : "down";
+      leader = `<span class="n" title="${v1Escape(top.name)}">${v1Escape(top.name)}</span>
+                <span class="p ${cls}">${pct}</span>`;
+    }
+
+    return `
+      <div class="v1-row v1-row-ratio">
+        <div class="v1-ratio" title="归成比 = 成交额占比 / 市值占比">
+          <div class="v1-ratio-track">
+            <div class="v1-ratio-fill" style="width:${w}%"></div>
+          </div>
+          <div class="v1-ratio-val">${ratio.toFixed(2)}</div>
+        </div>
+        <div class="v1-name" data-code="${v1Escape(it.code)}"
+             data-name="${v1Escape(it.name)}"
+             title="${v1Escape(it.name)}">${v1Escape(it.name)}</div>
+        <div class="v1-amount-pct" title="成交额占市场总成交额">${amountPct}</div>
+        <div class="v1-right">${amountStr}</div>
+        <div class="v1-meta">
+          <div class="v1-meta-lu">涨停 ${lu} 只</div>
+          <div class="v1-meta-top">领涨 ${leader}</div>
+        </div>
+      </div>`;
+  }).join("");
 }
 function v1RenderPct(items) {
   v1RenderList(v1El.pctList, items, {
@@ -171,9 +209,9 @@ function v1UpdateSortIndicator() {
 }
 function v1ImpClass(v) {
   if (v == null) return "low";
-  if (v >= 1.3) return "high";   // 顶部一批
-  if (v >= 0.9) return "mid";
-  return "low";
+  if (v >= 1.0) return "high";   // 金色：有龙头概念
+  if (v >= 0.6) return "mid";    // 蓝色：中等
+  return "low";                  // 灰色：普通
 }
 function v1RenderLadder(data) {
   const stocks = data?.stocks || [];

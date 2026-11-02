@@ -515,11 +515,14 @@ function setAmoVisible(visible) {
 
     // amo helper 完全隐藏（只用来定 x 轴，y 轴不用它了）
     chart.priceScale("amo").applyOptions({ visible: false });
+        // 立即清空归一化标注 canvas
+    requestAnimationFrame(drawNormLabels);
 
     loadAmoData();
   } else {
     wrap.classList.remove("amo-visible");
     amoClearCanvas();
+    setTimeout(drawNormLabels, 100);
 
     for (const k of ["ind1", "ind2", "ind3"]) {
       if (paneRefs[k].series) {

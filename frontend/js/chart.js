@@ -160,6 +160,11 @@ function drawNormLabels() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
 
+  // ⭐ AMO 模式下不画归一化标注
+  if (typeof amoState !== "undefined" && amoState.visible) {
+    return;
+  }
+
   if (!state.rows.length) return;
 
   const th = parseFloat(

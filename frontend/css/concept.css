@@ -1064,3 +1064,62 @@
 }
 .day-nav-btn:hover:not(:disabled) { background: #353a47; color: #fff; }
 .day-nav-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ── 归成比 TOP10 行布局 ── */
+.v1-row-ratio {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+}
+
+/* 归成比条形 + 数字 */
+.v1-ratio {
+  flex: 1 1 auto;
+  min-width: 90px;
+  max-width: 200px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.v1-ratio-track {
+  flex: 1 1 auto;
+  height: 12px;
+  background: #1c202b;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.v1-ratio-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #f97316, #ef4444);
+  border-radius: 3px;
+  transition: width .25s ease-out;
+}
+.v1-ratio-val {
+  width: 44px;
+  flex-shrink: 0;
+  text-align: right;
+  color: #ffb454;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A%：成交额占市场总成交额百分比 */
+.v1-amount-pct {
+  width: 58px;
+  flex-shrink: 0;
+  text-align: right;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 概念名列略窄，给归成比让位 */
+#v1AmountList .v1-name {
+  width: 84px;
+}
+@media (max-width: 1600px) {
+  #v1AmountList .v1-meta-top { display: none; }
+  #v1AmountList .v1-meta { width: 100px; }
+}

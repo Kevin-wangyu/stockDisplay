@@ -450,3 +450,6 @@ body { display: flex; flex-direction: column; }
   color: #fff;
   font-weight: 500;
 }
+#chartWrap.amo-visible #chartOverlay {
+  display: none;
+}

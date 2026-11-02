@@ -316,6 +316,7 @@ def main() -> None:
 
         # ⭐ compact 重建必须在所有查询之前（否则 _get_tops_and_scores 查不到当天）
         maybe_rebuild_month_archive()
+        n_ma2 = rebuild_market_amount()
 
         # 补最新日期的 picks（此时 compact 已包含当天数据）
         all_td = _list_partition_dates(CONCEPT_DIR)
@@ -323,8 +324,8 @@ def main() -> None:
             p = CONCEPT_PICKS_DIR / f"trade_date={d}" / "part.parquet"
             if not p.exists():
                 try:
-                    mt, ta, tp, tl, _ = _get_tops_and_scores(d)
-                    picks = _build_intersection_picks(ta, tp, tl, d, mt)
+                    mt, ta, tp, tl, cs = _get_tops_and_scores(d)
+                    picks = _build_intersection_picks(ta, tp, tl, d, mt, cs)
                     _save_picks_cache(d, picks)
                     logger.info(f"[serve] {d} picks 已生成")
                 except Exception:
