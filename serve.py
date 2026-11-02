@@ -69,10 +69,10 @@ def main() -> None:
                         if isinstance(s, dict) and "processed" in s)
                 f = sum(len(s.get("failed", [])) for s in stats.values()
                         if isinstance(s, dict) and "failed" in s)
-                print(f"[serve] 增量 ETL 完成: 处理 {p} 个文件, 失败 {f}")
+                logger.info(f"[serve] 增量 ETL 完成: 处理 {p} 个文件, 失败 {f}")
         except Exception as e:
-            print(f"[serve] 增量 ETL 失败: {e}")
-            print("[serve] 继续启动服务（请手动检查日志 logs/etl.log）")
+            logger.error(f"[serve] 增量 ETL 失败: {e}")
+            logger.info("[serve] 继续启动服务（请手动检查日志 logs/etl.log）")
 
     # ── 3. 数据完整性检查 ──
     try:
@@ -114,7 +114,7 @@ def main() -> None:
                     mt, ta, tp, tl, cs = _get_tops_and_scores(d)
                     picks = _build_intersection_picks(ta, tp, tl, d, mt, cs)
                     _save_picks_cache(d, picks)
-                    print(f"[serve] {d} picks 已生成")
+                    logger.info(f"[serve] {d} picks 已生成")
                 except Exception:
                     logger.exception("[serve] %s picks 生成失败", d)
     except Exception:
@@ -126,7 +126,7 @@ def main() -> None:
     print()
     print("=" * 60)
     print(f"  服务地址:   {url}")
-    print(f"  前端页面:   {url}/")
+    print(f"  前端页面:   {url}/index.html")
     print(f"  概念页面:   {url}/concept.html")
     print(f"  API 文档:   {url}/docs")
     print(f"  ETL 日志:   logs/etl.log")

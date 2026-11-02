@@ -147,7 +147,7 @@ class TDXXiaoda:
 
     # ── 通用 POST ──
     def _post(self, url: str, *, params=None, data: bytes = b"",
-              extra_headers=None, return_binary: bool = False):
+              extra_headers=None, return_binary: bool = False, timeout=None):
         headers = self._common_headers()
         if extra_headers:
             headers.update(extra_headers)
@@ -158,7 +158,7 @@ class TDXXiaoda:
             try:
                 resp = self.session.post(
                     url, params=params, headers=headers, data=data,
-                    timeout=self.cfg.request_timeout,
+                    timeout=timeout or self.cfg.request_timeout,
                 )
                 resp.raise_for_status()
                 return resp.content if return_binary else decode_json(resp.content)
@@ -372,6 +372,7 @@ class TDXXiaoda:
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             extra_headers={"Content-Type": "text/plain"},
             return_binary=True,
+            timeout=(10, 120), 
         )
         if body[:4] != b"PK\x03\x04":
             logger.error("exportExcel 未返回 xlsx，响应体长度=%d", len(body))

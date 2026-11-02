@@ -29,7 +29,12 @@ def rebuild_market_amount() -> int:
     写入 data/market_amount.parquet：
         trade_date (str, YYYY-MM-DD), total_amount (float, 元)
     返回本次新增的日期数。
+
+    ⚠ 直接读 data/industry_flow/trade_date=xxx/part.parquet，
+       不用 glob + hive_partitioning，避免列名绑定问题。
     """
+    from config import INDUSTRY_DIR
+
     existing = _load_existing_dates(MARKET_AMOUNT_FILE)
     all_dates = _list_partition_dates(INDUSTRY_DIR)
     todo = [d for d in all_dates if d not in existing]
@@ -39,14 +44,20 @@ def rebuild_market_amount() -> int:
 
     rows = []
     for d in todo:
-        r = _q_fetchone(
-            f"""
-            SELECT SUM(amount) AS total
-            FROM read_parquet({INDUSTRY_RAW_GLOB}, hive_partitioning=false, union_by_name=true)
-            WHERE trade_date = ?
-            """,
-            [d],
-        )
+        p = INDUSTRY_DIR / f"trade_date={d}" / "part.parquet"
+        if not p.exists():
+            logger.warning("[market_amount] %s 无分区文件，跳过", d)
+            continue
+        p_str = str(p).replace("\\", "/")
+
+        try:
+            r = _q_fetchone(
+                f"SELECT SUM(amount) AS total FROM read_parquet('{p_str}')"
+            )
+        except Exception:
+            logger.exception("[market_amount] 读 %s 失败", d)
+            continue
+
         total = 0.0
         if r and r[0] is not None:
             try:
@@ -57,12 +68,14 @@ def rebuild_market_amount() -> int:
                 pass
 
         if total <= 0:
-            logger.warning(
-                "[market_amount] %s 无成交额数据（data/ 缺分区或已归档），跳过不写",
-                d)
+            logger.warning("[market_amount] %s SUM=0 或非有限值，跳过", d)
             continue
 
         rows.append({"trade_date": d, "total_amount": total})
+
+    if not rows:
+        logger.info("[market_amount] 无新增有效行")
+        return 0
 
     new_df = pd.DataFrame(rows)
     if MARKET_AMOUNT_FILE.exists():
@@ -78,9 +91,8 @@ def rebuild_market_amount() -> int:
 
     MARKET_AMOUNT_FILE.parent.mkdir(parents=True, exist_ok=True)
     merged.to_parquet(MARKET_AMOUNT_FILE, index=False)
-    logger.info("[market_amount] 新增 %d 天，总计 %d 天", len(todo), len(merged))
-    return len(todo)
-
+    logger.info("[market_amount] 新增 %d 天，总计 %d 天", len(rows), len(merged))
+    return len(rows)
 
 
 # ═══ rebuild_daily_pct ═══
