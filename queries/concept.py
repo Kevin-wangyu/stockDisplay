@@ -18,7 +18,7 @@ from core.db import (
     CONCEPT_ALIAS_FILE,        # _resolve_map_name 里用
 )
 from core.helpers import (
-    _limit_up_threshold, _board_label, _json_safe, _market_avg_amount,GLD_MAX
+    _limit_up_threshold, _board_label, _json_safe, _market_avg_amount,GLD_MAX, _gld_weight
 )
 from core.loaders import (
     _load_stock_index_by_date, _load_pct_today,
@@ -150,24 +150,25 @@ def _compute_top_amount_by_ratio(base_df, trade_date, market_total, topn=10):
         axis=1,
     )
 
-    # ── 筛选 A > 10% ──
-    filtered = df[df["amount_pct"] > 10.0].copy()
+    # ── 筛选：A > 10% AND 归成比 > 1.1（强概念）──
+    strong_mask = (df["amount_pct"] > 10.0) & (df["norm_amount_ratio"] > 1)
+    filtered = df[strong_mask].copy()
 
     if len(filtered) >= topn:
         top = filtered.nlargest(topn, "norm_amount_ratio")
     elif not filtered.empty:
         head = filtered.sort_values("norm_amount_ratio", ascending=False)
-        rest = df[~df.index.isin(filtered.index)].copy()
+        rest = df[~strong_mask].copy()
         rest = rest.sort_values("norm_amount_ratio", ascending=False)
         top = pd.concat(
             [head, rest.head(topn - len(head))], ignore_index=False)
         logger.info(
-            "[top_amount] %s A>10%% 只有 %d 个，按归成比补齐至 %d 个",
+            "[top_amount] %s 强概念（A>10%%+归成比>1.1）只有 %d 个，补齐至 %d 个",
             trade_date, len(head), len(top))
     else:
         logger.info(
-            "[top_amount] %s 无概念 A>10%%（最高 %.2f%%），全市场按归成比取 TOP%d",
-            trade_date, float(df["amount_pct"].max()) if len(df) else 0.0, topn)
+            "[top_amount] %s 无强概念，全市场按归成比取 TOP%d",
+            trade_date, topn)
         top = df.nlargest(topn, "norm_amount_ratio")
 
     def _safe(v):
@@ -182,6 +183,9 @@ def _compute_top_amount_by_ratio(base_df, trade_date, market_total, topn=10):
     rows = []
     for _, r in top.iterrows():
         amount_pct = _safe(r["amount_pct"])
+        norm_ratio = _safe(r["norm_amount_ratio"])
+        # ⭐ 强概念：A > 10% AND 归成比 > 1.1
+        is_strong = (amount_pct > 10.0) and (norm_ratio > 1)
         rows.append({
             "code":  r["code"],
             "name":  r["name"],
@@ -192,7 +196,7 @@ def _compute_top_amount_by_ratio(base_df, trade_date, market_total, topn=10):
             "amount_pct":        amount_pct,
             "cap_pct":           _safe(r["cap_pct"]),
             "norm_amount_ratio": _safe(r["norm_amount_ratio"]),
-            "is_strong": amount_pct > 10.0,   # ⭐ A>10% = 主线
+            "is_strong": bool(is_strong),
         })
     return rows
 
@@ -429,7 +433,7 @@ def _build_intersection_picks(top_amount, top_pct, top_limit_up,
                 cs_score = concept_scores.get(c, {}).get("score", 0.0)
                 # gld 缺失时按"满关联"处理（不惩罚数据缺失）
                 gld = get_concept_gld(code, c, default=GLD_MAX)
-                gld_norm = min(gld / GLD_MAX, 1.0)
+                gld_norm = _gld_weight(gld)   # ⭐ 非线性映射
                 weighted_scores.append(cs_score * gld_norm)
                 gld_detail.append({"name": c, "gld": round(float(gld), 2)})
 
@@ -883,7 +887,7 @@ def get_limit_up_ladder(trade_date: str, min_days: int = 2) -> dict:
             for c in matched:
                 cs_score = concept_scores.get(c, {}).get("score", 0.0)
                 gld = get_concept_gld(code, c, default=GLD_MAX)
-                gld_norm = min(gld / GLD_MAX, 1.0)
+                gld_norm = _gld_weight(gld)   # ⭐ 非线性映射
                 weighted_scores.append(cs_score * gld_norm)
                 gld_detail.append({"name": c, "gld": round(float(gld), 2)})
 

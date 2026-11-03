@@ -61,6 +61,7 @@ def _serialize_bars(d: str, top_amount, top_pct, top_limit_up) -> list[dict]:
                 "top_stock_code": ts.get("code"),
                 "top_stock_name": ts.get("name"),
                 "top_stock_pct": ts.get("pct"),
+                "is_strong": bool(it.get("is_strong", True)),
             })
     return rows
 
@@ -130,6 +131,13 @@ def _load_tops_cache():
                 "top_stock": None,
                 "_rank": int(r["rank"]) if pd.notna(r.get("rank")) else 999,
             }
+             # ⭐ 读 is_strong；旧缓存无此列时按 A>10%+归成比>1.1 动态补算
+            if "is_strong" in r.index and pd.notna(r["is_strong"]):
+                item["is_strong"] = bool(r["is_strong"])
+            else:
+                amt_pct = item.get("amount_pct") or 0.0
+                ratio = item.get("norm_amount_ratio") or 0.0
+                item["is_strong"] = (amt_pct > 10.0) and (ratio > 1)
             if pd.notna(r.get("top_stock_code")):
                 item["top_stock"] = {
                     "code": r["top_stock_code"],

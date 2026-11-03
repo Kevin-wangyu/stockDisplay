@@ -4,43 +4,62 @@ let v1LastPicks = [];
 // ─── 颜色状态（每榜独立 + 全局共有）───
 const V1_COLOR_ORDER = { red: 0, yellow: 1, blue: 2, white: 3 };
 
-let v1Common3 = new Set();        // 三榜共有
-let v1Top5Union = new Set();      // 各榜前5并集（仅供 tag 用）
+// 全局颜色状态（每次 loadView1 重新计算）
+let v1Common2 = new Set();    // 任意两榜共有
+let v1A5Strong = new Set();   // 归成比榜前5（只含 is_strong）
+let v1P5 = new Set();         // 涨跌幅榜前5
+let v1L5 = new Set();         // 涨停数榜前5
+let v1Top5Union = new Set();  // 三榜前5并集（蓝色判断）
 
 /** 从三榜数据算出 common3 + top5Union。 */
 function v1ComputeGlobalColors(topAmount, topPct, topLimitUp) {
-  const A = new Set((topAmount || []).map(it => it.name));
+  // ── 归成比榜：只保留 is_strong（A>10% 且归成比>1.1）──
+  const strongAmount = (topAmount || []).filter(it => it.is_strong !== false);
+  const S = new Set(strongAmount.map(it => it.name));
+
+  // ── 涨跌幅榜 / 涨停数榜全部概念 ──
   const P = new Set((topPct || []).map(it => it.name));
   const L = new Set((topLimitUp || []).map(it => it.name));
 
-  v1Common3 = new Set(
-    [...A].filter(n => P.has(n) || L.has(n))
-  );
-  v1Top5Union = new Set([
-    ...(topAmount || []).slice(0, 5).map(it => it.name),
-    ...(topPct || []).slice(0, 5).map(it => it.name),
-    ...(topLimitUp || []).slice(0, 5).map(it => it.name),
-  ]);
+  // ── 归成比前5（strong）──
+  v1A5Strong = new Set(strongAmount.slice(0, 5).map(it => it.name));
+
+  // ── 涨跌幅前5 / 涨停数前5 ──
+  v1P5 = new Set((topPct || []).slice(0, 5).map(it => it.name));
+  v1L5 = new Set((topLimitUp || []).slice(0, 5).map(it => it.name));
+
+  // ── 任意两榜共有 ──
+  v1Common2 = new Set();
+  for (const n of S) if (P.has(n) || L.has(n)) v1Common2.add(n);
+  for (const n of P) if (L.has(n)) v1Common2.add(n);
+
+  // ── 三榜前5并集（用于蓝色判断）──
+  v1Top5Union = new Set([...v1A5Strong, ...v1P5, ...v1L5]);
 }
 
 /** 榜单行颜色：按【本榜前5】+【三榜共有】判定。 */
-function v1ColorForRow(name, rank) {
-  const inTop5 = rank < 5;
-  const inCommon = v1Common3.has(name);
-  if (inTop5 && inCommon) return "red";
-  if (inCommon) return "yellow";
-  if (inTop5) return "blue";
+function v1GetColorByName(name) {
+  // 红：归成比前5（strong）+ (涨跌幅前5 或 涨停数前5)
+  if (v1A5Strong.has(name) && (v1P5.has(name) || v1L5.has(name))) {
+    return "red";
+  }
+  // 黄：任意两榜共有
+  if (v1Common2.has(name)) {
+    return "yellow";
+  }
+  // 蓝：某榜前5
+  if (v1Top5Union.has(name)) {
+    return "blue";
+  }
   return "white";
 }
 
-/** tag 颜色（交集榜/天梯榜）：按【全局前5并集】+【三榜共有】判定。 */
+function v1ColorForRow(name, rank) {
+  return v1GetColorByName(name);
+}
+
 function v1ColorForTag(name) {
-  const inTop5 = v1Top5Union.has(name);
-  const inCommon = v1Common3.has(name);
-  if (inTop5 && inCommon) return "red";
-  if (inCommon) return "yellow";
-  if (inTop5) return "blue";
-  return "white";
+  return v1GetColorByName(name);
 }
 
 function v1SortConcepts(cfs) {
@@ -154,7 +173,7 @@ function v1RenderAmount(items, marketTotal) {
       ? it.amount_pct.toFixed(2) + "%" : "-";
     const amountStr = v1FmtYi(it.amount);
 
-    // ⭐ 主线（A>10%）vs 补齐
+    // ⭐ 强弱判定（A>10% AND 归成比>1.1）
     const isStrong = it.is_strong !== false;
     const cnameCls = isStrong ? v1ColorForRow(it.name, idx) : "white";
     const rowCls = isStrong ? "" : "v1-row-weak";
@@ -290,7 +309,7 @@ function v1RenderLadder(data) {
       <span data-key="streak_days" style="text-align:center">连板</span>
       <span data-key="code">代码</span>
       <span data-key="name">名称</span>
-      <span data-key="concepts">所属概念</span>
+      <span data-key="concepts">所属概念<span class="cfs-resize-handle" data-var="--ladder-cfs-w" title="拖动调整宽度">⋮</span></span>
       <span data-key="importance_index" style="text-align:right">重要性</span>
       <span data-key="close" style="text-align:right">收盘</span>
       <span data-key="pct_change" style="text-align:right">涨跌%</span>
@@ -314,7 +333,6 @@ function v1RenderLadder(data) {
 
   const MAX_SHOW = 5;
   const rowsHtml = stocks.map(s => {
-    // ⭐ 构建 gld 映射（命中三榜的概念才有）
     // ⭐ 构建 gld 映射（命中三榜的概念才有）
     const detailMap = {};
     const detailArr = Array.isArray(s.matched_cfs_detail)
@@ -689,7 +707,6 @@ document.addEventListener("click", (e) => {
   });
 })();
 
-// ─── 概念列拖拽手柄（document 委托，重建后也生效）───
 // ─── 概念列拖拽手柄（document 委托，重建后也生效）───
 document.addEventListener("mousedown", (e) => {
   const handle = e.target.closest(".cfs-resize-handle");

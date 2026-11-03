@@ -1277,3 +1277,15 @@
   color: #6ea8ff !important;
   text-decoration: underline;
 }
+#amoOverlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 42%;              /* 相对 #chartArea 的 42% */
+  bottom: 0;
+  z-index: 4;
+  pointer-events: none;
+  width: 100%;
+  display: none;
+}
+#chartWrap.amo-visible #amoOverlay { display: block; }

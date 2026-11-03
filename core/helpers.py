@@ -26,7 +26,41 @@ def _board_label(n: int) -> str:
     return f"{_CN_NUM.get(n, str(n))}板"
 
 GLD_MAX = 5.0  # eltdx 关联度（gld）的最大值（分级：3=中等，5=强关联）
+# eltdx 关联度（gld）分级 → 权重映射
+# 5=强关联(0.8), 4=较强(0.7), 3=一般(0.5), 2=弱(0.3), 1=很弱(0.2)
+GLD_TO_WEIGHT: dict[int, float] = {
+    1: 0.2,
+    2: 0.3,
+    3: 0.5,
+    4: 0.7,
+    5: 0.8,
+}
 
+
+def _gld_weight(gld) -> float:
+    """gld → 权重（非线性模糊映射）。
+
+    - 精确值 1~5 直接查表
+    - 非整数（如 3.5）用相邻两档线性插值
+    - 超范围 [1, 5] 用边界值
+    - 无效值默认 0.5（一般关联）
+    """
+    try:
+        g = float(gld)
+    except (TypeError, ValueError):
+        return 0.5
+
+    if g <= 1.0:
+        return GLD_TO_WEIGHT[1]
+    if g >= 5.0:
+        return GLD_TO_WEIGHT[5]
+
+    lo = int(g)
+    hi = lo + 1
+    frac = g - lo
+    w_lo = GLD_TO_WEIGHT[lo]
+    w_hi = GLD_TO_WEIGHT[hi]
+    return w_lo + (w_hi - w_lo) * frac
 # ── JSON 兜底（递归转 inf/nan → None） ──
 def _json_safe(obj):
     if isinstance(obj, float):

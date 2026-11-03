@@ -366,6 +366,7 @@ document.getElementById("nextDay").addEventListener("click",
 // ═══════════════════════════════════════════════════════════
 
 async function loadAmoData() {
+  console.log("[AMO] loadAmoData called, visible:", amoState.visible);   // ⭐
   if (!amoState.visible) return;
   const code = document.getElementById("code").value.trim();
   const start = document.getElementById("start").value;
@@ -402,6 +403,7 @@ async function loadAmoData() {
 }
 
 function setAmoVisible(visible) {
+  console.log("[AMO] setAmoVisible:", visible); 
   amoState.visible = visible;
   const wrap = document.getElementById("chartWrap");
 

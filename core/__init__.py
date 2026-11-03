@@ -10,7 +10,7 @@ from core.db import (
 from core.helpers import (
     _limit_up_threshold, _board_label, _json_safe,
     _dedup, _classify, _build_select_cols, _market_avg_amount,
-    GLD_MAX,
+    GLD_MAX, GLD_TO_WEIGHT, _gld_weight,
 )
 from core.loaders import (
     _list_partition_dates, _list_daily_pct_dates, _load_existing_dates,

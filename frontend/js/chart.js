@@ -242,6 +242,7 @@ function amoUpdateScale() {
 }
 
 function renderAmoCanvas() {
+  console.log("[AMO] renderAmoCanvas called, rows:", amoState.rows.length);   // ⭐
   const canvas = document.getElementById("amoOverlay");
   if (!canvas) return;
   if (!amoState.visible) return;

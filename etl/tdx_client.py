@@ -372,7 +372,7 @@ class TDXXiaoda:
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             extra_headers={"Content-Type": "text/plain"},
             return_binary=True,
-            timeout=(10, 120), 
+            timeout=(10, 20), 
         )
         if body[:4] != b"PK\x03\x04":
             logger.error("exportExcel 未返回 xlsx，响应体长度=%d", len(body))
