@@ -25,6 +25,7 @@ _CN_NUM = {2: "二", 3: "三", 4: "四", 5: "五", 6: "六",
 def _board_label(n: int) -> str:
     return f"{_CN_NUM.get(n, str(n))}板"
 
+GLD_MAX = 5.0  # eltdx 关联度（gld）的最大值（分级：3=中等，5=强关联）
 
 # ── JSON 兜底（递归转 inf/nan → None） ──
 def _json_safe(obj):

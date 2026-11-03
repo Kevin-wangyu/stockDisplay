@@ -1,12 +1,12 @@
 """按日数据加载（带 lru_cache）+ 目录扫描。"""
 from __future__ import annotations
 
-import logging
 import math
+import logging
 from pathlib import Path
+from functools import lru_cache
 
 import pandas as pd
-from functools import lru_cache
 
 from config import DATA_DIR, MAP_FILE, CONCEPT_DATE_DIR, QUOTE_DIR
 from core.db import (
@@ -170,6 +170,68 @@ def _load_stock_index_by_date(trade_date: str):
         for c in cfs:
             cf2codes.setdefault(c, []).append(code)
     return code_info, cf2codes
+
+# ══════════════════════════════════════════════════════════════
+# 概念元信息（gld / ztnr）—— 独立表，不随交易日膨胀
+# ══════════════════════════════════════════════════════════════
+
+@lru_cache(maxsize=1)
+def _load_concept_meta_table() -> dict:
+    """加载 concept_meta.parquet 到内存。
+
+    返回: {(code, topic_name): {"gld": float, "ztnr": str, "selected_date": str}}
+
+    - 一次性约 40 MB 内存
+    - 进程内永久缓存（lru_cache=1）
+    - 文件不存在时返回空 dict
+    """
+    meta_path = DATA_DIR / "concept_meta.parquet"
+    if not meta_path.exists():
+        logger.warning(
+            "[concept_meta] %s 不存在，gld 将全部默认 1.0。"
+            "请跑 step2_expand.py 生成。", meta_path)
+        return {}
+
+    df = pd.read_parquet(meta_path)
+    out = {}
+    for _, r in df.iterrows():
+        code = str(r["code"]).zfill(6)
+        topic = str(r["topic_name"])
+        try:
+            gld = float(r["gld"])
+            if gld != gld:   # NaN
+                gld = 1.0
+        except (ValueError, TypeError):
+            gld = 1.0
+        out[(code, topic)] = {
+            "gld": gld,
+            "ztnr": str(r["ztnr"] or ""),
+            "selected_date": str(r["selected_date"] or ""),
+        }
+    logger.info("[concept_meta] 加载 %d 条到内存", len(out))
+    return out
+
+
+def get_concept_gld(code: str, concept_name: str, default: float = 1.0) -> float:
+    """按需查某股票某概念的 gld。
+
+    - 不存在时返回 default（默认 1.0）
+    - O(1) 查字典
+    """
+    table = _load_concept_meta_table()
+    meta = table.get((str(code).zfill(6), str(concept_name)))
+    return meta["gld"] if meta else default
+
+
+def get_concept_ztnr(code: str, concept_name: str, default: str = "") -> str:
+    """按需查某股票某概念的入选原因（ztnr）。
+
+    - 不存在时返回 default（默认空串）
+    - O(1) 查字典
+    """
+    table = _load_concept_meta_table()
+    meta = table.get((str(code).zfill(6), str(concept_name)))
+    return meta["ztnr"] if meta else default
 
 # ── 当日 pct_change ──
 @lru_cache(maxsize=256)

@@ -54,7 +54,8 @@ def main():
     log.info("[main] 正在过滤...")
     con.execute(f"""
         COPY (
-            SELECT r.code, r.topic_id, r.topic_name, r.selected_date
+            SELECT r.code, r.topic_id, r.topic_name, r.selected_date,
+                   r.gld, r.ztnr
             FROM read_parquet('{IN_PATH}') r
             INNER JOIN whitelist_df w ON r.topic_name = w.topic_name
         )

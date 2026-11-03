@@ -11,9 +11,19 @@ import pyarrow.parquet as pq
 from eltdx import F10Client
 
 from logger_setup import setup_logger
-
+def _safe_float(v, default=None):
+    """转 float，NaN / None / 空串 返回 default。"""
+    if v is None:
+        return default
+    try:
+        f = float(v)
+        if f != f:   # NaN
+            return default
+        return f
+    except (ValueError, TypeError):
+        return default
 # ---------------- 配置 ----------------
-XLSX_PATH = "raw_data/全部a股所属概念.xlsx"
+XLSX_PATH = "raw_data/A股概念/2026年11月02日A股概念数据.xlsx"
 OUT_PATH = "data/raw_topics.parquet"
 PROGRESS_PATH = "data/fetch_progress.json"
 ERROR_PATH = "data/fetch_errors.txt"
@@ -48,10 +58,10 @@ rate_limiter = RateLimiter(MAX_QPS)
 
 def get_stock_list():
     log.info(f"[main] 读取股票列表: {XLSX_PATH}")
-    df = pd.read_excel(XLSX_PATH, dtype={"股票代码": str})
+    df = pd.read_excel(XLSX_PATH, dtype={"sec_code": str})
     codes = []
     skipped = []
-    for raw in df["股票代码"].astype(str).str.strip():
+    for raw in df["sec_code"].astype(str).str.strip():
         code = raw.zfill(6)
         if len(code) == 6 and code.isdigit():
             codes.append(code)
@@ -111,6 +121,8 @@ def fetch_one(client, code):
                     "topic_id": r.get("id"),
                     "topic_name": r.get("ztmc"),
                     "selected_date": rxsj_int,
+                    "gld":  _safe_float(r.get("gld"), default=None),
+                    "ztnr": str(r.get("ztnr") or "").strip(),
                 })
             log.debug(f"[{thread_name}] [{code}] OK {len(rows)}条 {elapsed:.2f}s 尝试{attempt+1}")
             return rows, None

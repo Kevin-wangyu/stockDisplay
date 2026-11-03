@@ -270,11 +270,17 @@ function v1UpdateSortIndicator() {
     }
   });
 }
-function v1ImpClass(v) {
+function v1ImpClass(v, pct) {
+  if (pct != null) {
+    if (pct >= 0.85) return "high";
+    if (pct >= 0.60) return "mid";
+    return "low";
+  }
+  // 兼容旧数据
   if (v == null) return "low";
-  if (v >= 1.0) return "high";   // 金色：有龙头概念
-  if (v >= 0.6) return "mid";    // 蓝色：中等
-  return "low";                  // 灰色：普通
+  if (v >= 1.0) return "high";
+  if (v >= 0.6) return "mid";
+  return "low";
 }
 function v1RenderLadder(data) {
   const stocks = data?.stocks || [];
@@ -284,7 +290,7 @@ function v1RenderLadder(data) {
       <span data-key="streak_days" style="text-align:center">连板</span>
       <span data-key="code">代码</span>
       <span data-key="name">名称</span>
-      <span data-key="concepts">所属概念<span class="cfs-resize-handle" data-var="--ladder-cfs-w" title="拖动调整宽度">⋮</span></span>
+      <span data-key="concepts">所属概念</span>
       <span data-key="importance_index" style="text-align:right">重要性</span>
       <span data-key="close" style="text-align:right">收盘</span>
       <span data-key="pct_change" style="text-align:right">涨跌%</span>
@@ -321,23 +327,30 @@ function v1RenderLadder(data) {
 
     const cls = (v) => v == null ? "" : (v >= 0 ? "up" : "down");
     const num = (v, d = 2) => v == null ? "-" : v.toFixed(d);
+
+    // ⭐ 重要性渲染（含 pct 分档 + title）
     const impText = s.importance_index != null
       ? s.importance_index.toFixed(2) : "-";
-    const impCls = v1ImpClass(s.importance_index);
+    const impCls = v1ImpClass(s.importance_index, s.importance_pct);
+    const impTitle = s.importance_pct != null
+      ? `当日相对强度 ${(s.importance_pct * 100).toFixed(0)}%` +
+        (s.rank_in_picks ? `，第 ${s.rank_in_picks}/${s.total_in_picks} 名` : "")
+      : "";
+
     const streakCls = s.streak_days >= 5 ? "lv-high"
                      : s.streak_days === 4 ? "lv-4"
                      : s.streak_days === 3 ? "lv-3" : "lv-2";
 
     return `
       <div class="v1-ladder-row" data-code="${v1Escape(s.code)}" data-name="${v1Escape(s.name)}">
-        <span class="v1-ladder-streak ${streakCls}">${s.streak_label}</span>
+        <span class="v1-ladder-streak ${streakCls}">${s.streak_label || "-"}</span>
         <span class="v1-ladder-code" data-code="${v1Escape(s.code)}"
               data-name="${v1Escape(s.name)}">${v1Escape(s.code)}</span>
         <span class="v1-ladder-name" data-code="${v1Escape(s.code)}"
               data-name="${v1Escape(s.name)}"
               title="${v1Escape(s.name)}">${v1Escape(s.name)}</span>
         <span class="v1-ladder-cfs" title="${v1Escape(titleAll)}">${tags}</span>
-        <span class="v1-ladder-imp ${impCls}">${impText}</span>
+        <span class="v1-ladder-imp ${impCls}" title="${impTitle}">${impText}</span>
         <span class="v1-ladder-num">${num(s.close)}</span>
         <span class="v1-ladder-num ${cls(s.pct_change)}">${v1FmtPctShort(s.pct_change)}</span>
         <span class="v1-ladder-num">${num(s.turnover_rate)}</span>
@@ -389,13 +402,24 @@ function v1RenderPicks(picks) {
 
   const MAX_SHOW = 8;
   const rowsHtml = sorted.map((p, i) => {
+    // ⭐ 优先用 detail（带 gld），fallback 到 matched_concepts
+    const detailMap = {};
+    const detailArr = Array.isArray(p.matched_concepts_detail)
+      ? p.matched_concepts_detail
+      : [];
+    detailArr.forEach(d => {
+      if (d && d.name) detailMap[d.name] = d.gld;
+    });
+
     const cfs = v1SortConcepts(p.matched_concepts || []);
     const shown = cfs.slice(0, MAX_SHOW);
     const more = cfs.length - shown.length;
     const tags =
       shown.map(c => {
         const color = v1ColorForTag(c);
-        return `<span class="v1-pick-cf cf-${color}">${v1Escape(c)}</span>`;
+        const gld = detailMap[c];
+        const gldStr = gld != null ? ` · gld ${gld}` : "";
+        return `<span class="v1-pick-cf cf-${color}" title="关联度 ${gldStr || '未知'}">${v1Escape(c)}</span>`;
       }).join("")
       + (more > 0 ? `<span class="v1-pick-cf more">+${more}</span>` : "");
     const titleAll = cfs.join("、");
@@ -404,10 +428,11 @@ function v1RenderPicks(picks) {
     const num = (v, d = 2) => v == null ? "-" : v.toFixed(d);
     const impText = p.importance_index != null
       ? p.importance_index.toFixed(2) : "-";
-    const impCls = p.importance_index != null
-      ? (p.importance_index >= 1.3 ? "imp-high"
-       : p.importance_index >= 0.9 ? "imp-mid" : "imp-low")
-      : "imp-low";
+    const impCls = v1ImpClass(p.importance_index, p.importance_pct);
+    const impTitle = p.importance_pct != null
+      ? `当日相对强度 ${(p.importance_pct * 100).toFixed(0)}%` +
+        (p.rank_in_picks ? `，第 ${p.rank_in_picks}/${p.total_in_picks} 名` : "")
+      : "";
 
     return `
       <div class="v1-pick-row">
@@ -416,7 +441,7 @@ function v1RenderPicks(picks) {
         <span class="col-name" title="${v1Escape(p.name)}">${v1Escape(p.name)}</span>
         <span class="col-cfs" title="${v1Escape(titleAll)}">${tags}</span>
         <span class="col-cnt">×${p.match_count}</span>
-        <span class="col-num col-importance ${impCls}">${impText}</span>
+        <span class="col-num col-importance ${impCls}" title="${impTitle}">${impText}</span>
         <span class="col-num">${num(p.close)}</span>
         <span class="col-num ${cls(p.pct_change)}">${v1FmtPctShort(p.pct_change)}</span>
         <span class="col-num">${num(p.turnover_rate)}</span>
@@ -471,11 +496,8 @@ async function loadView1() {
     if (avg20El) avg20El.textContent =
       ((data.market_avg_20d || 0) / 1e8).toFixed(2) + " 亿";
 
-    // ⭐ 前端自算（绕过 lru_cache 旧缓存问题，永远和榜单同步）
     // ⭐ 前端自算（common3 + top5Union）
     v1ComputeGlobalColors(data.top_amount, data.top_pct, data.top_limit_up);
-    console.log("[colors] common3:", [...v1Common3]);
-    console.log("[colors] top5Union:", [...v1Top5Union]);
     v1RenderAmount(data.top_amount || [], data.market_total_amount || 0);
     v1RenderPct(data.top_pct || []);
     v1RenderLimitUp(data.top_limit_up || []);
@@ -490,7 +512,7 @@ async function loadView1() {
     if (!data.picks_cached) {
       v1El.picksList.innerHTML = `
         <div class="v1-picks-empty">
-          该日期未预计算交集榜，请运行 <code>python precompute.py</code>
+          该日期未预计算交集榜，请运行 <code>scripts\\recompute_picks.py</code>
         </div>`;
     }
 
@@ -498,7 +520,7 @@ async function loadView1() {
     if (ladder.cached === false) {
       v1El.ladderList.innerHTML = `
         <div class="v1-ladder-empty">
-          该日期未预计算天梯榜，请运行 <code>python precompute.py</code>
+          该日期未预计算天梯榜，请运行 <code>scripts\\recompute_picks.py</code>
         </div>`;
     }
 

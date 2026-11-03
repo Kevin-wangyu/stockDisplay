@@ -19,6 +19,9 @@ def _picks_cache_path(trade_date: str) -> Path:
 
 
 def _load_cached_picks(trade_date: str):
+    """读 picks 缓存。自动反序列化 JSON 字段。"""
+    import json
+
     p = _picks_cache_path(trade_date)
     df = None
     if p.exists():
@@ -34,9 +37,29 @@ def _load_cached_picks(trade_date: str):
     if df is None or df.empty:
         return None
 
+    # matched_concepts: 分号串 → list
     if "matched_concepts" in df.columns:
         df["matched_concepts"] = df["matched_concepts"].fillna("").apply(
             lambda s: [x for x in str(s).split(";") if x])
+
+    # ⭐ matched_concepts_detail: JSON 字符串 → list of dict
+    if "matched_concepts_detail" in df.columns:
+        def _parse_detail(v):
+            if v is None:
+                return []
+            if isinstance(v, list):
+                return v
+            s = str(v).strip()
+            if not s or s == "[]" or s == "nan":
+                return []
+            try:
+                arr = json.loads(s)
+                return arr if isinstance(arr, list) else []
+            except (json.JSONDecodeError, TypeError):
+                return []
+        df["matched_concepts_detail"] = df["matched_concepts_detail"].apply(
+            _parse_detail)
+
     return df.to_dict(orient="records")
 
 
@@ -44,16 +67,26 @@ def _save_picks_cache(trade_date: str, picks: list[dict]) -> None:
     if not picks:
         return
     try:
+        import json
+
         df = pd.DataFrame(picks)
+
+        # matched_concepts: 分号串（前端拆）
         if "matched_concepts" in df.columns:
             df["matched_concepts"] = df["matched_concepts"].apply(
                 lambda xs: ";".join(xs) if isinstance(xs, list) else "")
+
+        # ⭐ matched_concepts_detail: JSON 字符串（保留 gld 结构）
+        if "matched_concepts_detail" in df.columns:
+            df["matched_concepts_detail"] = df["matched_concepts_detail"].apply(
+                lambda xs: json.dumps(xs, ensure_ascii=False)
+                if isinstance(xs, list) else "[]")
+
         out = _picks_cache_path(trade_date)
         out.parent.mkdir(parents=True, exist_ok=True)
         df.to_parquet(out, index=False)
     except Exception:
         logger.exception("写入 concept_picks 缓存失败 %s", trade_date)
-
 
 def _is_stable_date(trade_date: str) -> bool:
     row = _q_fetchone(

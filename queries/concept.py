@@ -18,13 +18,14 @@ from core.db import (
     CONCEPT_ALIAS_FILE,        # _resolve_map_name 里用
 )
 from core.helpers import (
-    _limit_up_threshold, _board_label, _json_safe, _market_avg_amount,
+    _limit_up_threshold, _board_label, _json_safe, _market_avg_amount,GLD_MAX
 )
 from core.loaders import (
     _load_stock_index_by_date, _load_pct_today,
     _list_partition_dates,
     _list_daily_pct_dates,     # ⭐ get_trading_day_neighbor 里用
     _load_alias_reverse,
+    get_concept_gld,
 )
 from core.rebuild import (
     rebuild_limit_up_streak, _rebuild_streak_for_date,
@@ -420,24 +421,36 @@ def _build_intersection_picks(top_amount, top_pct, top_limit_up,
         matched_sorted = sorted(matched, key=lambda x: order.get(x, 999))
         m = len(matched_sorted)
 
-        # ── 重要性：mean × n^0.3 ──
+        # ── 重要性：gld 加权 mean × n^0.4 + 龙头加成 ──
         if m > 0:
-            scores = [concept_scores.get(c, {}).get("score", 0.0)
-                      for c in matched_sorted]
-            mean_score = sum(scores) / m
+            weighted_scores = []
+            gld_detail = []
+            for c in matched_sorted:
+                cs_score = concept_scores.get(c, {}).get("score", 0.0)
+                # gld 缺失时按"满关联"处理（不惩罚数据缺失）
+                gld = get_concept_gld(code, c, default=GLD_MAX)
+                gld_norm = min(gld / GLD_MAX, 1.0)
+                weighted_scores.append(cs_score * gld_norm)
+                gld_detail.append({"name": c, "gld": round(float(gld), 2)})
+
+            mean_score = sum(weighted_scores) / m
             base_importance = mean_score * (m ** 0.4)
 
-            # 龙头加成：命中"分数 >= 0.8 的顶级概念" → +20%
-            has_leader = any(s >= 0.8 for s in scores)
+            has_leader = any(
+                concept_scores.get(c, {}).get("score", 0.0) >= 0.8
+                for c in matched_sorted
+            )
             importance = base_importance * (1.20 if has_leader else 1.0)
         else:
             importance = 0.0
+            gld_detail = []
 
         picks.append({
             "code": code,
             "name": name,
             "match_count": m,
-            "matched_concepts": matched_sorted,
+            "matched_concepts": matched_sorted,          # 兼容旧前端
+            "matched_concepts_detail": gld_detail,       # ⭐ 新增（含 gld）
             "importance_index": round(importance, 2),
         })
 
@@ -548,6 +561,14 @@ def _build_intersection_picks(top_amount, top_pct, top_limit_up,
             "fwd_5d": _fwd(5), "fwd_10d": _fwd(10),
             "fwd_20d": _fwd(20), "fwd_30d": _fwd(30),
         })
+    # ⭐ 归一化 importance（当日相对强度）
+    if picks:
+        max_imp = max(p["importance_index"] for p in picks) or 1.0
+        total = len(picks)
+        for idx, p in enumerate(picks):
+            p["importance_pct"] = round(p["importance_index"] / max_imp, 3)
+            p["rank_in_picks"] = idx + 1
+            p["total_in_picks"] = total
 
     return picks
 
@@ -556,8 +577,9 @@ def _build_intersection_picks(top_amount, top_pct, top_limit_up,
 # ── 对外 ──
 @lru_cache(maxsize=32)
 def get_concept_date_top10(trade_date: str) -> dict:
+    from core.tops_cache import get_tops_and_scores_cached
     market_total, top_amount, top_pct, top_limit_up, _ = \
-        _get_tops_and_scores(trade_date)
+        get_tops_and_scores_cached(trade_date)
 
     picks = _load_cached_picks(trade_date) or []
 
@@ -777,8 +799,9 @@ def get_limit_up_ladder(trade_date: str, min_days: int = 2) -> dict:
     streak_map = dict(zip(df["code"], df["streak_days"].astype(int)))
 
     try:
+        from core.tops_cache import get_tops_and_scores_cached
         _, top_amount, top_pct, top_limit_up, concept_scores = \
-            _get_tops_and_scores(trade_date)
+            get_tops_and_scores_cached(trade_date)
     except ValueError:
         return {"trade_date": trade_date, "stocks": []}
 
@@ -855,14 +878,25 @@ def get_limit_up_ladder(trade_date: str, min_days: int = 2) -> dict:
         matched = sorted(cs & target_cfs)
         m = len(matched)
         if m > 0:
-            scores = [concept_scores.get(c, {}).get("score", 0.0)
-                      for c in matched]
-            mean_score = sum(scores) / m
+            weighted_scores = []
+            gld_detail = []
+            for c in matched:
+                cs_score = concept_scores.get(c, {}).get("score", 0.0)
+                gld = get_concept_gld(code, c, default=GLD_MAX)
+                gld_norm = min(gld / GLD_MAX, 1.0)
+                weighted_scores.append(cs_score * gld_norm)
+                gld_detail.append({"name": c, "gld": round(float(gld), 2)})
+
+            mean_score = sum(weighted_scores) / m
             base_importance = mean_score * (m ** 0.4)
-            has_leader = any(s >= 0.8 for s in scores)
+            has_leader = any(
+                concept_scores.get(c, {}).get("score", 0.0) >= 0.8
+                for c in matched
+            )
             importance = base_importance * (1.20 if has_leader else 1.0)
         else:
             importance = 0.0
+            gld_detail = []
         r = qmap.get(code)
         if r is None:
             stocks.append({
@@ -870,6 +904,7 @@ def get_limit_up_ladder(trade_date: str, min_days: int = 2) -> dict:
                 "streak_days": streak_map[code],
                 "streak_label": _board_label(streak_map[code]),
                 "concepts": sorted(cs),
+                "matched_cfs_detail": gld_detail,
                 "importance_index": round(importance, 2),
                 "close": None, "pct_change": pct_map.get(code),
                 "turnover_rate": None, "hot_rank": None,
@@ -915,6 +950,17 @@ def get_limit_up_ladder(trade_date: str, min_days: int = 2) -> dict:
         })
 
     stocks.sort(key=lambda x: (-x["streak_days"], -x["importance_index"], x["code"]))
+
+    # ══════════════════════════════════════════════════════════
+    # 归一化 importance（天梯榜），供前端颜色分档
+    # ══════════════════════════════════════════════════════════
+    if stocks:
+        max_imp = max(s["importance_index"] for s in stocks) or 1.0
+        total = len(stocks)
+        for idx, s in enumerate(stocks):
+            s["importance_pct"] = round(s["importance_index"] / max_imp, 3)
+            s["rank_in_picks"] = idx + 1
+            s["total_in_picks"] = total
     concept_colors = _compute_concept_colors(top_amount, top_pct, top_limit_up)
     result = {"trade_date": trade_date, "stocks": stocks, "concept_colors": concept_colors}
     return _json_safe(result)

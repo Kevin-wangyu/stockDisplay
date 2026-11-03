@@ -28,6 +28,10 @@ from core.rebuild import (
 from core.picks_cache import (
     _load_cached_picks, _save_picks_cache, CONCEPT_PICKS_DIR,
 )
+from core.tops_cache import (
+    get_tops_and_scores_cached, rebuild_tops_cache,
+    invalidate_tops_cache, cache_stats,
+)
 from core.loaders import (
     _list_partition_dates, _load_pct_today, _load_stock_index_by_date,
 )

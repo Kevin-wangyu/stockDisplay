@@ -36,6 +36,10 @@ def main():
                         help="等价于 --start（兼容旧用法）")
     parser.add_argument("--skip-streak", action="store_true",
                         help="跳过 limit_up_streak 重建（只跑 picks）")
+    parser.add_argument("--rebuild-tops", action="store_true",
+                        help="重建 _tops_cache（三榜 + scores）")
+    parser.add_argument("--only-picks", action="store_true",
+                        help="只重算 picks（跳过 _tops_cache）")
     args = parser.parse_args()
 
     # 参数互斥校验
@@ -86,6 +90,14 @@ def main():
         n = rebuild_limit_up_streak(force=args.force, limit_days=9999)
         print(f"[precompute] streak {n} 天（{time.time()-t0:.1f}s）")
 
+    # ── 3.5. 重建 _tops_cache ──
+    if args.rebuild_tops:
+        print("[precompute] 重建 _tops_cache…")
+        from core.tops_cache import rebuild_tops_cache
+        t_tops = time.time()
+        n_tops = rebuild_tops_cache(all_td, force=args.force)
+        print(f"[precompute] _tops_cache {n_tops} 天（{time.time() - t_tops:.0f}s）")
+
     # ── 4. concept_picks ──
     print("[precompute] 生成 concept_picks…")
     n_picks = 0
@@ -97,8 +109,13 @@ def main():
             skipped += 1
             continue
         try:
-            market_total, top_amount, top_pct, top_limit_up, concept_scores = \
-                _get_tops_and_scores(d)
+            if args.only_picks:
+                from core.tops_cache import get_tops_and_scores_cached
+                market_total, top_amount, top_pct, top_limit_up, concept_scores = \
+                    get_tops_and_scores_cached(d)
+            else:
+                market_total, top_amount, top_pct, top_limit_up, concept_scores = \
+                    _get_tops_and_scores(d)
             picks = _build_intersection_picks(
                 top_amount, top_pct, top_limit_up, d, market_total,
                 concept_scores)

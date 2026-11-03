@@ -5,7 +5,8 @@ from datetime import timedelta
 import duckdb
 
 from logger_setup import setup_logger
-
+from datetime import date as _date
+from trading_calendar import trading_days as _trading_days
 RAW = "data/raw_topics.parquet"
 OUT_DIR = "data/concept_date"
 START_DATE = "2024-02-01"
@@ -38,6 +39,18 @@ def main():
     # 内存和线程配置
     con.execute("SET threads = 4")
     con.execute("SET memory_limit = '4GB'")
+        # ⭐ 建立全量交易日临时表，替代 generate_series
+    log.info("[main] 加载交易日历...")
+    _start = _date.fromisoformat(START_DATE)
+    _end = _date.today()
+    _all_trading = _trading_days(_start, _end)
+    log.info(f"[main]   交易日 {len(_all_trading)} 天（{_start} ~ {_end}）")
+
+    con.execute("CREATE TABLE trading_days (trade_date DATE)")
+    con.executemany(
+        "INSERT INTO trading_days VALUES (?)",
+        [(_d,) for _d in _all_trading],
+    )
 
     # 1) 读取原始数据
     log.info("[main] 步骤 1/4: 读取原始数据...")
@@ -97,12 +110,9 @@ def main():
                 FROM raw r
                 JOIN stock_start ss ON r.code = ss.code
                 JOIN (
-                    SELECT CAST(d AS DATE) AS trade_date
-                    FROM generate_series(
-                        GREATEST(DATE '{ms}', DATE '{START_DATE}'),
-                        LEAST(DATE '{me}' - INTERVAL 1 DAY, CURRENT_DATE),
-                        INTERVAL 1 DAY
-                    ) AS t(d)
+                    SELECT trade_date FROM trading_days
+                    WHERE trade_date BETWEEN GREATEST(DATE '{ms}', DATE '{START_DATE}')
+                                          AND DATE '{me}' - INTERVAL 1 DAY
                 ) ds
                 ON ds.trade_date BETWEEN
                     GREATEST(r.selected_date, ss.start_date, DATE '{START_DATE}')
@@ -113,8 +123,7 @@ def main():
             (FORMAT PARQUET,
             PARTITION_BY (trade_date),
             OVERWRITE_OR_IGNORE,
-            COMPRESSION '{COMPRESSION}',
-            FILE_NAME_PATTERN 'part.parquet')
+            COMPRESSION '{COMPRESSION}')
         """)
         elapsed = time.time() - t0
 
@@ -126,12 +135,9 @@ def main():
                     FROM raw r
                     JOIN stock_start ss ON r.code = ss.code
                     JOIN (
-                        SELECT CAST(d AS DATE) AS trade_date
-                        FROM generate_series(
-                            GREATEST(DATE '{ms}', DATE '{START_DATE}'),
-                            LEAST(DATE '{me}' - INTERVAL 1 DAY, CURRENT_DATE),
-                            INTERVAL 1 DAY
-                        ) AS t(d)
+                        SELECT trade_date FROM trading_days
+                        WHERE trade_date BETWEEN GREATEST(DATE '{ms}', DATE '{START_DATE}')
+                                              AND DATE '{me}' - INTERVAL 1 DAY
                     ) ds
                       ON ds.trade_date BETWEEN
                          GREATEST(r.selected_date, ss.start_date, DATE '{START_DATE}')
@@ -175,6 +181,43 @@ def main():
                     os.rename(old_path, new_path)
                     renamed += 1
     log.info(f"[main] 重命名 {renamed} 个文件")
+
+    # ══════════════════════════════════════════════════════════
+    # 额外：生成 concept_meta.parquet（gld + ztnr 独立表）
+    #
+    # 同一 (code, topic_name) 只保留最早入选日那条，避免重复
+    # ══════════════════════════════════════════════════════════
+    META_PATH = "data/concept_meta.parquet"
+    log.info(f"[main] 生成 {META_PATH}（code, topic_name, gld, ztnr, selected_date）...")
+
+    con.execute(f"""
+        COPY (
+            SELECT code, topic_name, selected_date, gld, ztnr
+            FROM (
+                SELECT
+                    code,
+                    topic_name,
+                    CAST(selected_date AS VARCHAR) AS selected_date,
+                    COALESCE(gld, 1.0) AS gld,
+                    COALESCE(ztnr, '') AS ztnr,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY code, topic_name
+                        ORDER BY selected_date
+                    ) AS rn
+                FROM read_parquet('{RAW}')
+                WHERE selected_date > 0
+            )
+            WHERE rn = 1
+            ORDER BY code, topic_name
+        )
+        TO '{META_PATH}'
+        (FORMAT PARQUET, COMPRESSION 'zstd')
+    """)
+
+    n_meta = con.execute(f"SELECT COUNT(*) FROM read_parquet('{META_PATH}')").fetchone()[0]
+    import os as _os
+    meta_size = _os.path.getsize(META_PATH) / 1024 / 1024
+    log.info(f"[main] concept_meta 生成完成: {n_meta} 条, {meta_size:.1f} MB")
 
     con.close()
 

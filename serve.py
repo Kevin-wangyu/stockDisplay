@@ -104,7 +104,19 @@ def main() -> None:
 
         # compact 重建必须在查询之前
         maybe_rebuild_month_archive()
-
+        # ⭐ 增量补 _tops_cache（每天新增的 concept_flow）
+        try:
+            from core.tops_cache import rebuild_tops_cache, _load_tops_cache
+            all_td = _list_partition_dates(CONCEPT_DIR)
+            bars_map, _, _ = _load_tops_cache()
+            missing = [d for d in all_td if d not in bars_map]
+            if missing:
+                print(f"[serve] 补 _tops_cache {len(missing)} 天")
+                n_tops = rebuild_tops_cache(missing)
+                print(f"[serve] _tops_cache 补 {n_tops} 天")
+        except Exception:
+            logging.getLogger(__name__).exception("[serve] _tops_cache 增量失败")
+            
         # 补最新日期的 picks
         all_td = _list_partition_dates(CONCEPT_DIR)
         for d in all_td[-1:]:
