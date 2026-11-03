@@ -155,14 +155,17 @@ def api_stock_chart(
 
     # 缺失交易日检测（不抛错，失败时返回空列表）
     try:
-        missing = queries.get_missing_trading_days(code, start, end, kind="stock")
+        missing_info = queries.get_missing_trading_days(code, start, end, kind="stock")
     except Exception:
         logger.exception("缺失检测失败 code=%s", code)
-        missing = []
+        missing_info = {"missing": [], "suspected_suspension": []}
+
+
 
     return {
         "rows": _records(df),
-        "missing_dates": missing,
+        "missing_dates": missing_info["missing"],
+        "suspected_suspension": missing_info["suspected_suspension"],
     }
 
 

@@ -9,7 +9,7 @@ import pandas as pd
 
 from config import MAP_FILE
 from core.db import (
-    _q_df, _q_fetchone, QUOTE_GLOB, STOCK_BASE_COLS, DEFAULT_INDICATORS,
+    _q_df, _q_fetchone, QUOTE_GLOB, STOCK_BASE_COLS, DEFAULT_INDICATORS, INDUSTRY_GLOB, CONCEPT_GLOB
 )
 from core.helpers import _dedup, _classify, _build_select_cols
 from indicators import SQL_INDICATORS, PYTHON_INDICATORS, list_indicators
@@ -214,13 +214,45 @@ def get_missing_trading_days(
         logger.exception("获取交易日历失败，跳过缺失检测")
         return []
     
-    missing = sorted(expected - actual)
+    missing_sorted = sorted(expected - actual)
+
+    if not missing_sorted:
+        return {"missing": [], "suspected_suspension": []}
+
+    # ⭐ 按连续段分组
+    from datetime import date as _date
+    dates = [_date.fromisoformat(d) for d in missing_sorted]
+    groups = []
+    cur_group = [dates[0]]
+    for i in range(1, len(dates)):
+        # 两个缺失日之间 ≤5 个自然日 → 同一组（覆盖周末）
+        if (dates[i] - dates[i-1]).days <= 5:
+            cur_group.append(dates[i])
+        else:
+            groups.append(cur_group)
+            cur_group = [dates[i]]
+    groups.append(cur_group)
+
+    # 连续 ≥3 天 → 疑似停牌；否则 → 数据缺失
+    suspected = []
+    real_missing = []
+    for g in groups:
+        start = g[0].isoformat()
+        end = g[-1].isoformat()
+        n = len(g)
+        if n >= 3:
+            suspected.append({"start": start, "end": end, "days": n})
+        else:
+            real_missing.extend([d.isoformat() for d in g])
 
     logger.debug(
-        "[missing] code=%s kind=%s | expected=%d actual=%d missing=%d | "
-        "actual sample=%s",
-        code, kind, len(expected), len(actual), len(missing),
-        sorted(actual)[:3],
+        "[missing] code=%s kind=%s | expected=%d actual=%d | "
+        "缺失=%d（疑似停牌 %d 段）",
+        code, kind, len(expected), len(actual),
+        len(missing_sorted), len(suspected),
     )
 
-    return missing
+    return {
+        "missing": real_missing,
+        "suspected_suspension": suspected,
+    }

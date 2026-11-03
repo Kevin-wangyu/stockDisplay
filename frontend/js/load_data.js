@@ -74,38 +74,45 @@ async function load() {
             .map(i => i.name),
         ]));
 
-        let rows, industryName = "", missing = [];
+        let rows, industryName = "";
+        let missingDates = [];
+        let suspectedSuspension = [];
 
         if (dataSource === "stock") {
-        const url = `/api/stock/${encodeURIComponent(code)}`
-                    + `?start=${start}&end=${end}&indicators=${wanted.join(",")}`;
-        const res = await fetch(url);
-        if (!res.ok) {
-            const err = await res.json().catch(() => ({ detail: res.statusText }));
-            throw new Error(err.detail || `HTTP ${res.status}`);
-        }
-        const data = await res.json();
-        if (myToken !== loadToken) return; 
-        rows = data.rows;
-        missing = data.missing_dates || [];
+            const url = `/api/stock/${encodeURIComponent(code)}`
+                        + `?start=${start}&end=${end}&indicators=${wanted.join(",")}`;
+            const res = await fetch(url);
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ detail: res.statusText }));
+                throw new Error(err.detail || `HTTP ${res.status}`);
+            }
+            const data = await res.json();
+            if (myToken !== loadToken) return;
+            rows = data.rows;
+            missingDates = data.missing_dates || [];
+            suspectedSuspension = data.suspected_suspension || [];
         } else {
-        const url = `/api/stock/${encodeURIComponent(code)}/industry_chart`
-                    + `?start=${start}&end=${end}&indicators=${wanted.join(",")}`;
-        const res = await fetch(url);
-        if (!res.ok) {
-            const err = await res.json().catch(() => ({ detail: res.statusText }));
-            throw new Error(err.detail || `HTTP ${res.status}`);
+            const url = `/api/stock/${encodeURIComponent(code)}/industry_chart`
+                        + `?start=${start}&end=${end}&indicators=${wanted.join(",")}`;
+            const res = await fetch(url);
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ detail: res.statusText }));
+                throw new Error(err.detail || `HTTP ${res.status}`);
+            }
+            const data = await res.json();
+            if (myToken !== loadToken) return;
+            rows = data.rows;
+            industryName = data.industry_name || "";
+            // industry_chart 接口不返回 missing 信息
+            missingDates = [];
+            suspectedSuspension = [];
         }
-        const data = await res.json();
-        if (myToken !== loadToken) return; 
-        rows = data.rows;
-        industryName = data.industry_name || "";
-        }
+
         drawState.drawings = [];
         redrawDrawings();
 
         state.rows = rows;
-        showMissingWarning(missing);
+        showMissingWarning(missingDates, suspectedSuspension);
 
         if (!rows.length) {
             candleSeries.setData([]);
@@ -408,6 +415,7 @@ function setAmoVisible(visible) {
   const sideCtrl = document.getElementById("amoSideCtrl");
 
   if (visible) {
+    _initAmoHelper(); 
     wrap.classList.add("amo-visible");
     if (sideCtrl) sideCtrl.style.display = "inline-flex";
 
@@ -452,13 +460,15 @@ function setAmoVisible(visible) {
     chart.priceScale("amo").applyOptions({ visible: false });
   }
 
-  setTimeout(() => {
+  requestAnimationFrame(() => {
     chart.applyOptions({
-      width: chartEl.clientWidth,
+      width:  chartEl.clientWidth,
       height: chartEl.clientHeight,
     });
-    if (visible) renderAmoCanvas();
-  }, 50);
+    requestAnimationFrame(() => {
+      if (visible) renderAmoCanvas();
+    });
+  });
 }
 
 function setAmoMode(mode) {

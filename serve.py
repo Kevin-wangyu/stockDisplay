@@ -39,6 +39,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--force-etl", action="store_true", help="ETL 强制重跑已存在分区")
     p.add_argument("--etl-date", default=None, help="ETL 只处理该日期（YYYYMMDD）")
     p.add_argument("--no-reload", action="store_true", help="关闭 uvicorn 热重载")
+    p.add_argument("--check-missing-days", type=int, default=5,
+                   help="启动时检查最近 N 个交易日的整行缺失（默认 5，0=不检查）")
+    p.add_argument("--auto-backfill-missing", action="store_true",
+                   help="整行缺失时用 eltdx 自动补全（默认只报告）")
     return p.parse_args()
 
 
@@ -80,6 +84,23 @@ def main() -> None:
         check_data_integrity()
     except Exception:
         logger.exception("[serve] 数据完整性检查失败（不影响启动）")
+    # ══════════════════════════════════════════════════════════
+    # ⭐ 新增：整行缺失检测（可选自动补全）
+    # ══════════════════════════════════════════════════════════
+    if args.check_missing_days > 0:
+        try:
+            from startup.missing_kline_check import check_recent_missing
+            result = check_recent_missing(
+                n_days=args.check_missing_days,
+                auto_backfill=args.auto_backfill_missing,
+            )
+            if result["backfilled"]:
+                # 补了数据，需要扩大 daily_pct / streak 的重算范围
+                backfill_max = args.check_missing_days
+                print(f"[serve] 缺失补全 {sum(result['backfilled'].values())} 行，"
+                      f"daily_pct/streak 重算范围将扩大到 {backfill_max} 天")
+        except Exception:
+            logger.exception("[serve] 整行缺失检测失败（不影响启动）")
 
     # ── 4. 增量汇总表 + compact + picks ──
     try:
@@ -95,11 +116,16 @@ def main() -> None:
 
         n_ma = rebuild_market_amount()
         logger.info(f"[serve] market_amount 新增 {n_ma} 天")
+        # ⭐ force_recent_days 取 max(3, check_missing_days)
+        force_days = max(3, args.check_missing_days)
 
-        n_dp = rebuild_daily_pct(force_recent_days=3)
-        logger.info(f"[serve] daily_pct 写入 {n_dp} 天")
+        n_dp = rebuild_daily_pct(force_recent_days=force_days)
+        logger.info(f"[serve] daily_pct 写入 {n_dp} 天（recent={force_days}）")
 
-        n_st = rebuild_limit_up_streak(limit_days=3, force_recent_days=3)
+        n_st = rebuild_limit_up_streak(
+            limit_days=max(3, force_days),
+            force_recent_days=max(3, force_days),
+        )
         logger.info(f"[serve] limit_up_streak 写入 {n_st} 天")
 
         # compact 重建必须在查询之前

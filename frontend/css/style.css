@@ -388,17 +388,7 @@ body { display: flex; flex-direction: column; }
 .day-nav-btn:hover:not(:disabled) { background: #353a47; color: #fff; }
 .day-nav-btn:disabled { opacity: .45; cursor: not-allowed; }
 
-#amoOverlay {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 42%;          /* ← 从 42% 开始（K 线占上方） */
-  bottom: 0;
-  z-index: 4;
-  pointer-events: none;
-  width: 100%;
-  display: none;
-}
+
 #chartWrap.amo-visible #amoOverlay { display: block; }
 /* AMO 三段式开关 */
 
@@ -592,7 +582,6 @@ body { display: flex; flex-direction: column; }
   top: 6px;
   bottom: 6px;
   width: 1px;
-  background: rgba(239, 83, 80, 0.25);
 }
 #drawTools #clearDrawings:hover {
   background: rgba(239, 83, 80, 0.12) !important;
@@ -619,4 +608,44 @@ body { display: flex; flex-direction: column; }
 }
 #toolbar .seg-btn:not(.active) {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+}
+#amoOverlay {
+  position: absolute;
+  inset: 0;                /* ⭐ 全屏，覆盖整个 chartArea */
+  z-index: 4;
+  pointer-events: none;
+  width: 100%;
+  height: 100%;
+  display: none;
+}
+#chartWrap.amo-visible #amoOverlay { display: block; }
+/* ── 停牌提示（灰色低调） ── */
+#missingWarning.suspension-only {
+  background: rgba(120, 123, 134, 0.12);
+  border-color: rgba(120, 123, 134, 0.5);
+  color: #8b8f9a;
+}
+#missingWarning.suspension-only .title {
+  color: #a0a4ae;
+}
+#missingWarning.suspension-only .susp-dates {
+  color: #9aa0aa;
+}
+
+/* 真缺失 + 停牌同时出现时，停牌部分内嵌灰色 */
+#missingWarning .suspension-inline {
+  display: block;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(120, 123, 134, 0.3);
+  color: #8b8f9a;
+  font-size: 11px;
+}
+#missingWarning .susp-title {
+  font-weight: 500;
+  margin-right: 4px;
+}
+#missingWarning .susp-dates {
+  color: #9aa0aa;
+  word-break: break-all;
 }

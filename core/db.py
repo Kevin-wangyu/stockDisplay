@@ -90,4 +90,4 @@ SECTOR_BASE_COLS = [
     "open", "high", "low", "close", "volume", "amount",
     "huge_order_net", "big_order_net", "medium_order_net", "small_order_net",
 ]
-DEFAULT_INDICATORS = ["main_net_3d", "volume_3d"]
+DEFAULT_INDICATORS = ["ma5", "ma10"]

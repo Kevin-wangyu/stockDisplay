@@ -163,7 +163,7 @@ def _compute_top_amount_by_ratio(base_df, trade_date, market_total, topn=10):
         top = pd.concat(
             [head, rest.head(topn - len(head))], ignore_index=False)
         logger.info(
-            "[top_amount] %s 强概念（A>10%%+归成比>1.1）只有 %d 个，补齐至 %d 个",
+            "[top_amount] %s 强概念（A>10%%+归成比>1.0）只有 %d 个，补齐至 %d 个",
             trade_date, len(head), len(top))
     else:
         logger.info(
@@ -184,7 +184,7 @@ def _compute_top_amount_by_ratio(base_df, trade_date, market_total, topn=10):
     for _, r in top.iterrows():
         amount_pct = _safe(r["amount_pct"])
         norm_ratio = _safe(r["norm_amount_ratio"])
-        # ⭐ 强概念：A > 10% AND 归成比 > 1.1
+        # ⭐ 强概念：A > 10% AND 归成比 > 1.0
         is_strong = (amount_pct > 10.0) and (norm_ratio > 1)
         rows.append({
             "code":  r["code"],

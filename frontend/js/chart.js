@@ -7,32 +7,32 @@ const missingWarnEl = document.getElementById("missingWarning");
 const btn = document.getElementById("load");
 
 const chart = LightweightCharts.createChart(chartEl, {
-layout: {
-    background: { color: COLORS.bg },
-    textColor: COLORS.text,
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif',
-    fontSize: 12,
-},
-grid: { vertLines: { color: COLORS.grid }, horzLines: { color: COLORS.grid } },
-crosshair: {
-    mode: LightweightCharts.CrosshairMode.Normal,
-    vertLine: { color: COLORS.crosshair, width: 1, style: 3, labelBackgroundColor: "#2962ff" },
-    horzLine: { color: COLORS.crosshair, width: 1, style: 3, labelBackgroundColor: "#2962ff" },
-},
-rightPriceScale: {
-    borderColor: COLORS.border,
-    scaleMargins: PANES.price,
-    minimumWidth: 70,
-},
-timeScale: { borderColor: COLORS.border, timeVisible: false, secondsVisible: false },
-localization: { locale: "zh-CN" },
+  layout: {
+      background: { color: COLORS.bg },
+      textColor: COLORS.text,
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif',
+      fontSize: 12,
+  },
+  grid: { vertLines: { color: COLORS.grid }, horzLines: { color: COLORS.grid } },
+  crosshair: {
+      mode: LightweightCharts.CrosshairMode.Normal,
+      vertLine: { color: COLORS.crosshair, width: 1, style: 3, labelBackgroundColor: "#2962ff" },
+      horzLine: { color: COLORS.crosshair, width: 1, style: 3, labelBackgroundColor: "#2962ff" },
+  },
+  rightPriceScale: {
+      borderColor: COLORS.border,
+      scaleMargins: PANES.price,
+      minimumWidth: 70,
+  },
+  timeScale: { borderColor: COLORS.border, timeVisible: false, secondsVisible: false },
+  localization: { locale: "zh-CN" },
 });
 
 const candleSeries = chart.addCandlestickSeries({
-upColor: COLORS.up, downColor: COLORS.down,
-borderUpColor: COLORS.up, borderDownColor: COLORS.down,
-wickUpColor: COLORS.up, wickDownColor: COLORS.down,
-priceLineVisible: false, lastValueVisible: true,
+  upColor: COLORS.up, downColor: COLORS.down,
+  borderUpColor: COLORS.up, borderDownColor: COLORS.down,
+  wickUpColor: COLORS.up, wickDownColor: COLORS.down,
+  priceLineVisible: false, lastValueVisible: true,
 });
 
 const overlaySeries = {};
@@ -71,7 +71,7 @@ const AMO_COLORS = {
 };
 const AMO_PANES = {
   price: { top: 0.00, bottom: 0.42 },   // K 线缩到 42%~58% 处
-  amo:   { top: 0.45, bottom: 0.02 },   // amo 区从 45% 到 98%
+  amo:   { top: 0.45, bottom: 0.00 },   // amo 区从 45% 到 98%
 };
 
 const amoState = {
@@ -81,7 +81,21 @@ const amoState = {
   rows: [],
   helper: null,
 };
-
+function _initAmoHelper() {
+  if (amoState.helper) return;   // 已创建过
+  amoState.helper = chart.addLineSeries({
+    priceScaleId: "amo",
+    color: "rgba(0,0,0,0)",
+    lineWidth: 0,
+    crosshairMarkerVisible: false,
+    priceLineVisible: false,
+    lastValueVisible: false,
+  });
+  chart.priceScale("amo").applyOptions({
+    visible: false,
+    scaleMargins: { top: 0.45, bottom: 0.00 },
+  });
+}
 // helper series：绑定 amo pane 的坐标系
 amoState.helper = chart.addLineSeries({
   priceScaleId: "amo",
@@ -130,7 +144,6 @@ function rebuildPane(paneKey, name, data) {
     ref.name = name;
 }
 // ─── 归一化标注 ───
-
 const NORM_BASES = [
   "huge_order_net", "big_order_net", "medium_order_net", "small_order_net",
 ];
@@ -234,6 +247,7 @@ function amoComputeLayout(mode) {
 }
 
 function amoUpdateScale() {
+  if (!amoState.helper) return;
   const { minV, maxV } = amoComputeLayout(amoState.mode);
   amoState.helper.applyOptions({
     autoscaleInfoProvider: () => ({
@@ -243,15 +257,17 @@ function amoUpdateScale() {
 }
 
 function renderAmoCanvas() {
-  console.log("[AMO] renderAmoCanvas called, rows:", amoState.rows.length);   // ⭐
   const canvas = document.getElementById("amoOverlay");
   if (!canvas) return;
   if (!amoState.visible) return;
+  if (!amoState.helper) return;
 
+  const chartArea = document.getElementById("chartArea") || chartEl;
   const dpr = window.devicePixelRatio || 1;
-  const w = canvas.clientWidth;
-  const h = canvas.clientHeight;
+  const w = chartArea.clientWidth;
+  const h = chartArea.clientHeight;
   if (!w || !h) return;
+
   if (canvas.width !== Math.round(w * dpr)) canvas.width = Math.round(w * dpr);
   if (canvas.height !== Math.round(h * dpr)) canvas.height = Math.round(h * dpr);
 
@@ -265,24 +281,20 @@ function renderAmoCanvas() {
   const mode = amoState.mode;
   const YI = 1e8;
 
-  // ── Y 轴映射：canvas 内部 y 直接从 minV/maxV 线性映射到 h ~ 0 ──
-  const { minV, maxV } = amoComputeLayout(mode);
-  const yOf = (v) => h - ((v - minV) / (maxV - minV)) * h;
+  // ⭐ Y 坐标：直接用 chart 的坐标系（helper.priceToCoordinate）
+  const yOf = (v) => amoState.helper.priceToCoordinate(v);
 
   const keys = ["huge", "big", "medium", "small"];
-
-  // 单日柱宽：取可视区域内单日宽度的 70%，限制 2~18px
-  // ⭐ side 控制：双向 / 只买 / 只卖
   const side = amoState.side || "both";
 
-  // 单日柱宽：双向模式按原宽度，单侧模式宽 30%（更清晰）
+  // 单日柱宽
   const visibleCount = Math.max(1, amoState.rows.length);
   const baseBarWidth = Math.max(2, Math.min(18, (w / visibleCount) * 0.7));
   const barWidth = (side === "both")
     ? baseBarWidth
     : Math.min(24, baseBarWidth * 1.3);
 
-  // ── 逐日堆叠柱（根据 side 决定画什么） ──
+  // ── 逐日堆叠柱 ──
   for (const r of amoState.rows) {
     const x = ts.timeToCoordinate(r.trade_date);
     if (x == null || x < -20 || x > w + 20) continue;
@@ -303,17 +315,14 @@ function renderAmoCanvas() {
                   .map(v => v / YI);
     }
 
-    // 计算绘制位置和宽度
     let xBuyStart, wBuy, xSellStart, wSell;
     if (side === "both") {
-      // 双向：左右并排，各占一半
       const halfW = Math.max(1, (barWidth - 1) / 2);
       xBuyStart  = x - halfW - 0.5;
       wBuy       = halfW;
       xSellStart = x + 0.5;
       wSell      = halfW;
     } else {
-      // 单侧：占满宽度，居中
       const fullW = barWidth;
       xBuyStart  = x - fullW / 2;
       wBuy       = fullW;
@@ -321,26 +330,28 @@ function renderAmoCanvas() {
       wSell      = fullW;
     }
 
-    // ── 主买 ──
+    // 主买
     if (side === "both" || side === "buy") {
       let cum = 0;
       for (let i = 0; i < 4; i++) {
         const y1 = yOf(cum);
         cum += buyVals[i];
         const y2 = yOf(cum);
+        if (y1 == null || y2 == null) continue;
         ctx.fillStyle = AMO_COLORS[keys[i]].buy;
         ctx.fillRect(xBuyStart, Math.min(y1, y2), wBuy,
                      Math.max(1, Math.abs(y2 - y1)));
       }
     }
 
-    // ── 主卖 ──
+    // 主卖
     if (side === "both" || side === "sell") {
       let cum = 0;
       for (let i = 0; i < 4; i++) {
         const y1 = yOf(cum);
         cum += sellVals[i];
         const y2 = yOf(cum);
+        if (y1 == null || y2 == null) continue;
         ctx.fillStyle = AMO_COLORS[keys[i]].sell;
         ctx.fillRect(xSellStart, Math.min(y1, y2), wSell,
                      Math.max(1, Math.abs(y2 - y1)));
@@ -366,6 +377,7 @@ function renderAmoCanvas() {
       netVal = (r.total_buy - r.total_sell) / YI;
     }
     const y = yOf(netVal);
+    if (y == null) continue;
     if (!started) { ctx.moveTo(x, y); started = true; }
     else ctx.lineTo(x, y);
   }
@@ -373,12 +385,14 @@ function renderAmoCanvas() {
 
   // ── 零基线 ──
   const y0 = yOf(0);
-  ctx.strokeStyle = "rgba(255,255,255,0.18)";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(0, y0);
-  ctx.lineTo(w, y0);
-  ctx.stroke();
+  if (y0 != null) {
+    ctx.strokeStyle = "rgba(255,255,255,0.18)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, y0);
+    ctx.lineTo(w, y0);
+    ctx.stroke();
+  }
 }
 function amoClearCanvas() {
   const canvas = document.getElementById("amoOverlay");
@@ -393,16 +407,21 @@ chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
   requestAnimationFrame(renderAmoCanvas);
 });
 
+new ResizeObserver(() => {
+  chart.applyOptions({
+    width:  chartEl.clientWidth,
+    height: chartEl.clientHeight,
+  });
+  requestAnimationFrame(() => {
+    drawNormLabels();
+    renderAmoCanvas();
+  });
+}).observe(chartEl);
+
 // 阈值变化 → 重绘
 document.getElementById("normThreshold")?.addEventListener("input", () => {
   requestAnimationFrame(drawNormLabels);
 });
-
-new ResizeObserver(() => {
-  chart.applyOptions({ width: chartEl.clientWidth, height: chartEl.clientHeight });
-  requestAnimationFrame(drawNormLabels);
-  requestAnimationFrame(renderAmoCanvas);
-}).observe(chartEl);
 
 chart.subscribeCrosshairMove((param) => {
     if (!param.time) { legendEl.innerHTML = ""; return; }
@@ -508,30 +527,62 @@ statusEl.textContent = m;
 statusEl.classList.toggle("error", e);
 };
 
-function showMissingWarning(missingDates) {
-if (!missingDates || !missingDates.length) {
-    missingWarnEl.classList.remove("show");
+function showMissingWarning(missingDates, suspectedSuspension) {
+  missingDates = missingDates || [];
+  suspectedSuspension = suspectedSuspension || [];
+
+  const hasMissing = missingDates.length > 0;
+  const hasSuspension = suspectedSuspension.length > 0;
+
+  if (!hasMissing && !hasSuspension) {
+    missingWarnEl.classList.remove("show", "suspension-only");
     missingWarnEl.innerHTML = "";
     return;
-}
-const MAX_SHOW = 8;
-const shown = missingDates.slice(0, MAX_SHOW).join("、");
-const more = missingDates.length > MAX_SHOW ? ` 等 ${missingDates.length} 天` : "";
+  }
 
-missingWarnEl.innerHTML =
-    `<span class="close-btn" title="关闭">×</span>` +
-    `<span class="title">⚠ 缺失交易日 ${missingDates.length} 天</span>` +
-    `<span class="dates">${shown}${more}</span>`;
-missingWarnEl.title = missingDates.join("\n");
-missingWarnEl.classList.add("show");
+  // 只有停牌、无真缺失 → 灰色低调提示（可关闭）
+  // 有真缺失 → 黄色警告 + 停牌说明
+  const isWarning = hasMissing;
 
-const closeBtn = missingWarnEl.querySelector(".close-btn");
-if (closeBtn) {
+  let html = `<span class="close-btn" title="关闭">×</span>`;
+
+  if (isWarning) {
+    const MAX_SHOW = 8;
+    const shown = missingDates.slice(0, MAX_SHOW).join("、");
+    const more = missingDates.length > MAX_SHOW
+      ? ` 等 ${missingDates.length} 天` : "";
+    html += `<span class="title">⚠ 缺失交易日 ${missingDates.length} 天</span>`;
+    html += `<span class="dates">${shown}${more}</span>`;
+  }
+
+  if (hasSuspension) {
+    const suspList = suspectedSuspension
+      .map(s => `${s.start} ~ ${s.end}（${s.days}天）`)
+      .join("、");
+    const suspCls = isWarning ? "suspension-inline" : "suspension-only";
+    html += `<span class="${suspCls}">` +
+      `<span class="susp-title">${isWarning ? "另" : ""}疑似停牌 ${suspectedSuspension.length} 段</span>` +
+      `<span class="susp-dates">${suspList}</span>` +
+      `</span>`;
+  }
+
+  missingWarnEl.innerHTML = html;
+  missingWarnEl.title = [
+    ...(hasMissing ? ["缺失日期：\n" + missingDates.join("\n")] : []),
+    ...(hasSuspension ? ["疑似停牌：\n" +
+      suspectedSuspension.map(s => `${s.start} ~ ${s.end}（${s.days}天）`).join("\n")]
+      : []),
+  ].join("\n\n");
+  missingWarnEl.classList.toggle("suspension-only", !isWarning);
+  missingWarnEl.classList.add("show");
+
+  const closeBtn = missingWarnEl.querySelector(".close-btn");
+  if (closeBtn) {
     closeBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    missingWarnEl.classList.remove("show");
+      e.stopPropagation();
+      missingWarnEl.classList.remove("show");
     });
-}
+  }
 }
 
 // ─────────────── 级联下拉 ───────────────

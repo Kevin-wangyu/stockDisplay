@@ -1,10 +1,10 @@
 """按月归档行情数据到 data_compact/。
 
 用法：
-    python archive_month.py                    # 全量归档（所有月份）
-    python archive_month.py --dry-run          # 只打印
-    python archive_month.py --kind quote       # 只归档 quote
-    python archive_month.py --rebuild-current  # 只重跑当月+上月（增量）
+    python scripts/archive_month.py                    # 全量归档（所有月份）
+    python scripts/archive_month.py --dry-run          # 只打印
+    python scripts/archive_month.py --kind quote       # 只归档 quote
+    python scripts/archive_month.py --rebuild-current  # 只重跑当月+上月（增量）
 
 日分区 data/{kind}/trade_date=*/ 全部保留，月合并只是额外的查询加速副本。
 """
