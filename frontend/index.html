@@ -81,15 +81,21 @@
         </button>
         <div class="dd-panel"></div>
       </div>
-
+      <label style="margin-left:12px">标注阈值</label>
+      <input id="normThreshold" type="number" step="0.05" min="0"
+             value="1.00" style="width:80px">
+    </div>
+    <div class="toolbar-row" id="overlayRow">
       <span class="seg-control" id="amoSegCtrl" style="margin-left:12px" title="买卖结构">
         <button class="seg-btn active" data-amo="off">AMO 关</button>
         <button class="seg-btn" data-amo="ratio">占比</button>
         <button class="seg-btn" data-amo="amount">金额</button>
       </span>
-      <label style="margin-left:12px">标注阈值</label>
-      <input id="normThreshold" type="number" step="0.05" min="0"
-             value="1.00" style="width:80px">
+      <span class="seg-control" id="amoSideCtrl" style="margin-left:8px;display:none" title="主买/主卖过滤">
+        <button class="seg-btn active" data-side="both">双向</button>
+        <button class="seg-btn" data-side="buy">主买</button>
+        <button class="seg-btn" data-side="sell">主卖</button>
+      </span>
     </div>
   </div>
 

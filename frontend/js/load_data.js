@@ -403,12 +403,13 @@ async function loadAmoData() {
 }
 
 function setAmoVisible(visible) {
-  console.log("[AMO] setAmoVisible:", visible); 
   amoState.visible = visible;
   const wrap = document.getElementById("chartWrap");
+  const sideCtrl = document.getElementById("amoSideCtrl");
 
   if (visible) {
     wrap.classList.add("amo-visible");
+    if (sideCtrl) sideCtrl.style.display = "inline-flex";
 
     // 隐藏 3 个指标
     for (const k of ["ind1", "ind2", "ind3"]) {
@@ -434,6 +435,7 @@ function setAmoVisible(visible) {
     loadAmoData();
   } else {
     wrap.classList.remove("amo-visible");
+    if (sideCtrl) sideCtrl.style.display = "none";
     amoClearCanvas();
     setTimeout(drawNormLabels, 100);
 
@@ -467,7 +469,19 @@ function setAmoMode(mode) {
   amoUpdateScale();
   setTimeout(renderAmoCanvas, 60);
 }
+function setAmoSide(side) {
+  amoState.side = side;
+  document.querySelectorAll("#amoSideCtrl .seg-btn").forEach(b =>
+    b.classList.toggle("active", b.dataset.side === side));
+  setTimeout(renderAmoCanvas, 30);
+  try {
+    localStorage.setItem("amo_side", side);
+  } catch (e) {}
+}
 
+document.querySelectorAll("#amoSideCtrl .seg-btn").forEach(btn => {
+  btn.addEventListener("click", () => setAmoSide(btn.dataset.side));
+});
 // 绑定事件
 // AMO 三段式开关
 document.querySelectorAll("#amoSegCtrl .seg-btn").forEach(btn => {

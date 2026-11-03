@@ -38,6 +38,12 @@
         }
     }
     if (!ok) setDefaultDateRange();
+    try {
+        const saved = localStorage.getItem("amo_side");
+        if (saved && ["both", "buy", "sell"].includes(saved)) {
+            setAmoSide(saved);
+        }
+    } catch (e) {}
 
     updateUIByDataSource();
     await load();

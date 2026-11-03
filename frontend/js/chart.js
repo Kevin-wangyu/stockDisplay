@@ -77,8 +77,9 @@ const AMO_PANES = {
 const amoState = {
   visible: false,
   mode: "ratio",       // "ratio" | "amount"
-  rows: [],            // [{trade_date, huge_buy, ...}]
-  helper: null,        // 透明 series，用于坐标转换
+  side: "both",        // "both" | "buy" | "sell"
+  rows: [],
+  helper: null,
 };
 
 // helper series：绑定 amo pane 的坐标系
@@ -271,11 +272,17 @@ function renderAmoCanvas() {
   const keys = ["huge", "big", "medium", "small"];
 
   // 单日柱宽：取可视区域内单日宽度的 70%，限制 2~18px
-  const visibleCount = Math.max(1, amoState.rows.length);
-  const barWidth = Math.max(2, Math.min(18, (w / visibleCount) * 0.7));
-  const halfW = Math.max(1, (barWidth - 1) / 2);
+  // ⭐ side 控制：双向 / 只买 / 只卖
+  const side = amoState.side || "both";
 
-  // ── 逐日堆叠柱（买左卖右，从 0 向上） ──
+  // 单日柱宽：双向模式按原宽度，单侧模式宽 30%（更清晰）
+  const visibleCount = Math.max(1, amoState.rows.length);
+  const baseBarWidth = Math.max(2, Math.min(18, (w / visibleCount) * 0.7));
+  const barWidth = (side === "both")
+    ? baseBarWidth
+    : Math.min(24, baseBarWidth * 1.3);
+
+  // ── 逐日堆叠柱（根据 side 决定画什么） ──
   for (const r of amoState.rows) {
     const x = ts.timeToCoordinate(r.trade_date);
     if (x == null || x < -20 || x > w + 20) continue;
@@ -296,29 +303,48 @@ function renderAmoCanvas() {
                   .map(v => v / YI);
     }
 
-    const xBuy  = x - halfW - 0.5;
-    const xSell = x + 0.5;
-
-    // 主买（左半边，从 0 向上堆叠）
-    let cum = 0;
-    for (let i = 0; i < 4; i++) {
-      const y1 = yOf(cum);
-      cum += buyVals[i];
-      const y2 = yOf(cum);
-      ctx.fillStyle = AMO_COLORS[keys[i]].buy;
-      ctx.fillRect(xBuy, Math.min(y1, y2), halfW,
-                   Math.max(1, Math.abs(y2 - y1)));
+    // 计算绘制位置和宽度
+    let xBuyStart, wBuy, xSellStart, wSell;
+    if (side === "both") {
+      // 双向：左右并排，各占一半
+      const halfW = Math.max(1, (barWidth - 1) / 2);
+      xBuyStart  = x - halfW - 0.5;
+      wBuy       = halfW;
+      xSellStart = x + 0.5;
+      wSell      = halfW;
+    } else {
+      // 单侧：占满宽度，居中
+      const fullW = barWidth;
+      xBuyStart  = x - fullW / 2;
+      wBuy       = fullW;
+      xSellStart = x - fullW / 2;
+      wSell      = fullW;
     }
 
-    // 主卖（右半边，从 0 向上堆叠）
-    cum = 0;
-    for (let i = 0; i < 4; i++) {
-      const y1 = yOf(cum);
-      cum += sellVals[i];
-      const y2 = yOf(cum);
-      ctx.fillStyle = AMO_COLORS[keys[i]].sell;
-      ctx.fillRect(xSell, Math.min(y1, y2), halfW,
-                   Math.max(1, Math.abs(y2 - y1)));
+    // ── 主买 ──
+    if (side === "both" || side === "buy") {
+      let cum = 0;
+      for (let i = 0; i < 4; i++) {
+        const y1 = yOf(cum);
+        cum += buyVals[i];
+        const y2 = yOf(cum);
+        ctx.fillStyle = AMO_COLORS[keys[i]].buy;
+        ctx.fillRect(xBuyStart, Math.min(y1, y2), wBuy,
+                     Math.max(1, Math.abs(y2 - y1)));
+      }
+    }
+
+    // ── 主卖 ──
+    if (side === "both" || side === "sell") {
+      let cum = 0;
+      for (let i = 0; i < 4; i++) {
+        const y1 = yOf(cum);
+        cum += sellVals[i];
+        const y2 = yOf(cum);
+        ctx.fillStyle = AMO_COLORS[keys[i]].sell;
+        ctx.fillRect(xSellStart, Math.min(y1, y2), wSell,
+                     Math.max(1, Math.abs(y2 - y1)));
+      }
     }
   }
 

@@ -347,30 +347,6 @@ body { display: flex; flex-direction: column; }
     padding-right: 20px;   /* 给关闭按钮让出空间 */
 }
 
-/* ── 画线工具 ── */
-#drawTools {
-    display: inline-flex;
-    gap: 4px;
-    margin-left: 12px;
-}
-.draw-btn {
-    background: var(--border);
-    color: var(--text-dim);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 4px 10px;
-    font-size: 12px;
-    cursor: pointer;
-    font-family: inherit;
-    transition: color .12s, background .12s, border-color .12s;
-    user-select: none;
-}
-.draw-btn:hover { background: #353a47; color: var(--text); }
-.draw-btn.active {
-    background: rgba(41,98,255,.18);
-    color: var(--accent);
-    border-color: var(--accent);
-}
 
 /* 画线 canvas 覆盖层 */
 #drawCanvas {
@@ -425,24 +401,7 @@ body { display: flex; flex-direction: column; }
 }
 #chartWrap.amo-visible #amoOverlay { display: block; }
 /* AMO 三段式开关 */
-.seg-control {
-  display: inline-flex;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  overflow: hidden;
-}
-.seg-btn {
-  background: transparent;
-  color: var(--text-dim);
-  border: none;
-  padding: 5px 12px;
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 12px;
-  line-height: 1;
-  transition: background .12s, color .12s;
-  user-select: none;
-}
+
 .seg-btn + .seg-btn { border-left: 1px solid var(--border); }
 .seg-btn:hover:not(.active) { background: #353a47; color: var(--text); }
 .seg-btn.active {
@@ -544,4 +503,120 @@ body { display: flex; flex-direction: column; }
 #chartWrap:not(.concept-mode) #chartArea {
   position: absolute;
   inset: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════ */
+/* 现代化工具栏 · Segmented Control（AMO + 画线工具通用）    */
+/* ═══════════════════════════════════════════════════════════ */
+
+/* ── 容器：深色胶囊底 + 微弱边框 + 阴影 ── */
+#toolbar .seg-control,
+#drawTools {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  margin-left: 12px;
+  background: rgba(22, 26, 35, 0.85);
+  border: 1px solid rgba(42, 46, 57, 0.9);
+  border-radius: 8px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 1px 2px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(6px);
+}
+
+/* ── 按钮基础 ── */
+#toolbar .seg-btn,
+#drawTools .draw-btn {
+  background: transparent !important;
+  color: #8b8f9a !important;
+  border: none !important;
+  padding: 5px 11px !important;
+  border-radius: 6px !important;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition:
+    color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
+    background 0.15s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 0.15s cubic-bezier(0.4, 0, 0.2, 1),
+    transform 0.08s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ── hover：半透明白高光 ── */
+#toolbar .seg-btn:hover:not(.active),
+#drawTools .draw-btn:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: #d1d4dc !important;
+}
+
+/* ── 按下：微妙下沉 ── */
+#toolbar .seg-btn:active,
+#drawTools .draw-btn:active {
+  transform: scale(0.97);
+}
+
+/* ── 选中：渐变蓝 + 内高光 + 外发光 ── */
+#toolbar .seg-btn.active,
+#drawTools .draw-btn.active {
+  background: linear-gradient(180deg, #3b76ff 0%, #2556e5 100%) !important;
+  color: #ffffff !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 2px 6px rgba(41, 98, 255, 0.35) !important;
+}
+
+/* ── 焦点环（键盘导航友好） ── */
+#toolbar .seg-btn:focus-visible,
+#drawTools .draw-btn:focus-visible {
+  outline: 2px solid rgba(41, 98, 255, 0.5);
+  outline-offset: 1px;
+}
+
+/* ── 清空按钮（危险操作）：红色 + 左侧分隔 ── */
+#drawTools #clearDrawings {
+  color: #ef5350 !important;
+  margin-left: 4px;
+  position: relative;
+}
+#drawTools #clearDrawings::before {
+  content: "";
+  position: absolute;
+  left: -3px;
+  top: 6px;
+  bottom: 6px;
+  width: 1px;
+  background: rgba(239, 83, 80, 0.25);
+}
+#drawTools #clearDrawings:hover {
+  background: rgba(239, 83, 80, 0.12) !important;
+  color: #ff6b6b !important;
+}
+#drawTools .draw-btn[data-tool="none"]::before { content: "↖ "; opacity: 0.7; }
+#drawTools .draw-btn[data-tool="hline"]::before { content: "─ "; opacity: 0.7; }
+#drawTools .draw-btn[data-tool="vline"]::before { content: "│ "; opacity: 0.7; }
+#drawTools .draw-btn[data-tool="trend"]::before { content: "╱ "; opacity: 0.7; }
+#drawTools .draw-btn[data-tool="ray"]::before { content: "↗ "; opacity: 0.7; }
+#drawTools .draw-btn[data-tool="erase"]::before { content: "✕ "; opacity: 0.7; }
+#drawTools #clearDrawings::before { content: "⌫ "; opacity: 0.7; position: static; }
+/* 注意：上面有 ::before 做分隔线，需要合并 */
+#toolbar .seg-btn.active::after {
+  content: "";
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  background: #fff;
+  border-radius: 50%;
+  margin-left: 4px;
+  vertical-align: middle;
+  opacity: 0.8;
+}
+#toolbar .seg-btn:not(.active) {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 }

@@ -114,7 +114,7 @@ DATA_TYPES: dict[str, dict] = {
 if _AMO_AVAILABLE:
     DATA_TYPES["amo"] = {
         "label": "买卖金额组成",
-        "in_daily_etl": False,       # 暂未纳入 daily_update（手动跑 etl_amo.py）
+        "in_daily_etl": True,       # 暂未纳入 daily_update（手动跑 etl_amo.py）
         "tdx_order": 1,              # tdx_fetch 里最先抓
         "tdx_rang": "AG",
         "tdx_words": WORDS_AMO,
