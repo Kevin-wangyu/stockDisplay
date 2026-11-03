@@ -128,6 +128,7 @@ def _load_tops_cache():
                 "norm_amount_ratio": _num(r.get("norm_amount_ratio")),
                 "limit_up_count": int(r["limit_up_count"]) if pd.notna(r.get("limit_up_count")) else 0,
                 "top_stock": None,
+                "_rank": int(r["rank"]) if pd.notna(r.get("rank")) else 999,
             }
             if pd.notna(r.get("top_stock_code")):
                 item["top_stock"] = {
@@ -137,10 +138,12 @@ def _load_tops_cache():
                 }
             bars_map.setdefault(d, {}).setdefault(list_type, []).append(item)
 
-        # 按 rank 排序
+        # ⭐ 按 rank 排序（保持榜单顺序），然后移除内部字段
         for d in bars_map:
             for lt in bars_map[d]:
-                bars_map[d][lt].sort(key=lambda x: x.get("code", ""))
+                bars_map[d][lt].sort(key=lambda x: x.get("_rank", 999))
+                for item in bars_map[d][lt]:
+                    item.pop("_rank", None)
 
     if META_PATH.exists():
         df = pd.read_parquet(META_PATH)
@@ -165,7 +168,6 @@ def _load_tops_cache():
                 }
 
     return bars_map, scores_map, market_map
-
 
 def _num(v):
     if v is None or not pd.notna(v):

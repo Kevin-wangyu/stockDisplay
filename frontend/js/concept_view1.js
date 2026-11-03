@@ -314,13 +314,25 @@ function v1RenderLadder(data) {
 
   const MAX_SHOW = 5;
   const rowsHtml = stocks.map(s => {
+    // ⭐ 构建 gld 映射（命中三榜的概念才有）
+    // ⭐ 构建 gld 映射（命中三榜的概念才有）
+    const detailMap = {};
+    const detailArr = Array.isArray(s.matched_cfs_detail)
+      ? s.matched_cfs_detail
+      : [];
+    detailArr.forEach(d => {
+      if (d && d.name) detailMap[d.name] = d.gld;
+    });
+
     const sortedCfs = v1SortConcepts(s.concepts || []);
     const cfs = sortedCfs.slice(0, MAX_SHOW);
     const more = sortedCfs.length - cfs.length;
     const tags =
       cfs.map(c => {
         const color = v1ColorForTag(c);
-        return `<span class="v1-ladder-cf cf-${color}">${v1Escape(c)}</span>`;
+        const gld = detailMap[c];
+        const gldStr = gld != null ? `gld ${gld}` : "非三榜命中";
+        return `<span class="v1-ladder-cf cf-${color}" title="${v1Escape(c)} · ${gldStr}">${v1Escape(c)}</span>`;
       }).join("")
       + (more > 0 ? `<span class="v1-ladder-cf more">+${more}</span>` : "");
     const titleAll = (s.concepts || []).join("、");

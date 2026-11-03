@@ -934,6 +934,7 @@ def get_limit_up_ladder(trade_date: str, min_days: int = 2) -> dict:
             "streak_days": streak_map[code],
             "streak_label": _board_label(streak_map[code]),
             "concepts": sorted(cs),
+            "matched_cfs_detail": gld_detail, 
             "importance_index": round(importance, 2),
             "close": close,
             "pct_change": pct_map.get(code),
