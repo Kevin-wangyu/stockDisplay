@@ -20,12 +20,12 @@
     })();
     const center = urlCenter || today;
 
-    // 前 400 交易日 ~ center
+    // 前 300 交易日 ~ center
     let ok = false;
     if (urlCenter) {
         try {
             const r = await fetch(
-                `/api/trading_days_around?date=${urlCenter}&before=200&after=100`);
+                `/api/trading_days_around?date=${urlCenter}&before=300&after=300`);
             if (r.ok) {
                 const j = await r.json();
                 document.getElementById("start").value = j.start;

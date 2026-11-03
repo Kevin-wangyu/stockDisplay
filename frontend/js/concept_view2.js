@@ -162,6 +162,8 @@ const V2_COLUMNS = [
   { key: "code",             label: "代码", w: 56, align: "left"  },
   { key: "name",             label: "名称", w: 76, align: "left"  },
   { key: "pct_change",       label: "涨幅", w: 58, align: "right" },
+  { key: "importance_index", label: "重要性", w: 60, align: "right" },   // ⭐ 新增
+  { key: "gld",              label: "关联度", w: 56, align: "right" },   // ⭐ 新增
   { key: "close",            label: "收盘", w: 60, align: "right" },
   { key: "turnover_rate",    label: "换手", w: 48, align: "right" },
   { key: "hot_rank",         label: "热度", w: 42, align: "right" },
@@ -184,6 +186,12 @@ function v2GridTemplate() {
 
 function v2FmtNum(v, d = 2) {
   return v == null ? "-" : v.toFixed(d);
+}
+function v2ImpClass(v) {
+  if (v == null) return "";
+  if (v >= 1.0) return "imp-high";
+  if (v >= 0.6) return "imp-mid";
+  return "imp-low";
 }
 function v2FmtPct(v) {
   return v == null ? "-" : (v >= 0 ? "+" : "") + v.toFixed(2) + "%";
@@ -628,6 +636,9 @@ function v2RenderExpanded(stocks) {
         <span class="c-code v2-jump-code" title="点击打开 K 线页">${s.code}</span>
         <span class="c-name" title="${s.name}">${s.name}</span>
         <span class="c-num ${pctCls}">${pctTxt}</span>
+        <span class="c-num ${v2ImpClass(s.importance_index)}"
+              title="当日重要性">${s.importance_index != null ? s.importance_index.toFixed(2) : "-"}</span>
+        <span class="c-num" title="与该概念的关联度（1~5，空=无数据）">${s.gld != null ? s.gld.toFixed(0) : "-"}</span>
         <span class="c-num">${v2FmtNum(s.close)}</span>
         <span class="c-num">${v2FmtNum(s.turnover_rate)}</span>
         <span class="c-num">${s.hot_rank == null ? "-" : s.hot_rank.toFixed(0)}</span>
@@ -725,7 +736,7 @@ async function v2UpdateRangeFromDate(tradeDate) {
   if (!tradeDate) return;
   try {
     const r = await fetch(
-      `/api/trading_days_around?date=${tradeDate}&before=200&after=100`);
+      `/api/trading_days_around?date=${tradeDate}&before=300&after=300`);
     if (r.ok) {
       const j = await r.json();
       v2El.startInput.value = j.start;

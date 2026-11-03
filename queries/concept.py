@@ -6,7 +6,6 @@ import math
 from collections import defaultdict
 from datetime import date as _date, timedelta as _td
 from functools import lru_cache               # ⭐ 必须加！否则 @lru_cache 崩
-
 import pandas as pd
 
 from config import MAP_FILE, DATA_DIR, CONCEPT_DATE_DIR
@@ -721,9 +720,50 @@ def get_concept_limit_up_stocks(
         return net * trate / amount
 
     stocks = []
+    # ⭐ 拿当日三榜 + 概念分（用于算 importance）
+    try:
+        _, top_amount, top_pct, top_limit_up, concept_scores = \
+            _get_tops_and_scores(trade_date)
+    except Exception:
+        concept_scores = {}
+        top_amount = top_pct = top_limit_up = []
+
+    target_cfs = set()
+    for lst in (top_amount, top_pct, top_limit_up):
+        for it in lst:
+            target_cfs.add(it["name"])
+
+    def _calc_importance(code_: str) -> float:
+        """计算该股的当日重要性（与交集榜口径一致）。"""
+        cs = code_info.get(code_, ("", frozenset()))[1]
+        matched = cs & target_cfs
+        m = len(matched)
+        if m == 0:
+            return 0.0
+        weighted = []
+        for c in matched:
+            score = concept_scores.get(c, {}).get("score", 0.0)
+            gld_ = get_concept_gld(code_, c, default=GLD_MAX)
+            weighted.append(score * _gld_weight(gld_))
+        mean = sum(weighted) / m
+        base = mean * (m ** 0.4)
+        has_leader = any(
+            concept_scores.get(c, {}).get("score", 0.0) >= 0.8
+            for c in matched
+        )
+        return base * (1.20 if has_leader else 1.0)
+
+    stocks = []
     for code in hit_codes:
         r = qmap.get(code)
         nm = name_by_code.get(code, "")
+
+        # ⭐ 与该概念的关联度
+        gld_val = get_concept_gld(code, cf_name, default=0.0)
+
+        # ⭐ 当日该股重要性
+        imp_val = _calc_importance(code)
+
         if r is None:
             stocks.append({
                 "code": code, "name": nm,
@@ -734,6 +774,8 @@ def get_concept_limit_up_stocks(
                 "medium_order_net": None, "small_order_net": None,
                 "huge_order_net_norm": None, "big_order_net_norm": None,
                 "medium_order_net_norm": None, "small_order_net_norm": None,
+                "importance_index": round(imp_val, 2),
+                "gld": gld_val,
             })
             continue
 
@@ -743,7 +785,6 @@ def get_concept_limit_up_stocks(
         n_h, n_b = _num(r["huge_order_net"]),   _num(r["big_order_net"])
         n_m, n_s = _num(r["medium_order_net"]), _num(r["small_order_net"])
 
-        # pct_change 统一用 daily_pct（与涨停判定、与 K 线前复权口径一致）
         pct_unified = pct_today.get(code)
 
         stocks.append({
@@ -762,8 +803,9 @@ def get_concept_limit_up_stocks(
             "big_order_net_norm":    _norm(n_b, amount, trate),
             "medium_order_net_norm": _norm(n_m, amount, trate),
             "small_order_net_norm":  _norm(n_s, amount, trate),
+            "importance_index": round(imp_val, 2),
+            "gld": gld_val,
         })
-
     # 按当日 pct_change 降序；为 None 排最后
     stocks.sort(key=lambda x: (-(x["pct_change"] if x["pct_change"] is not None else -1e18),
                                x["code"]))

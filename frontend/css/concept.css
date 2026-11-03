@@ -1289,3 +1289,9 @@
   display: none;
 }
 #chartWrap.amo-visible #amoOverlay { display: block; }
+/* ── 界面 2 展开态：重要性颜色分档 ── */
+.v2-stock-row .c-num.imp-high { color: #ffb454; font-weight: 600; }
+.v2-stock-row .c-num.imp-mid  { color: #6ea8ff; }
+.v2-stock-row .c-num.imp-low  { color: var(--text-dim); }
+/* 可选：关联度 4/5 突出 */
+.v2-stock-row .c-gld-high { color: #ef5350; }
