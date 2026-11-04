@@ -17,47 +17,125 @@ from trading_calendar import trading_days
 
 logger = logging.getLogger(__name__)
 def _add_forward_returns(df: pd.DataFrame, code: str, end: str) -> pd.DataFrame:
-    """给个股 K 线追加未来 5/10/20/30 日涨幅。"""
+    """给个股 K 线逐行追加未来 N 日的收盘涨幅 + 最高涨幅。
+
+    对每一行（trade_date = T）：
+      fwd_Nd      = (close[T+N] / close[T] - 1) * 100
+      fwd_max_Nd  = (max(high[T+1..T+N]) / close[T] - 1) * 100
+
+    规则：
+      - 起点 T+1，终点 T+N（不含当日 T）
+      - 未来交易日不足 N 天 → null
+      - 未来某天 data 缺失（停牌）→ 该天 high/close 视为 null；
+        若窗口内有效 high 数量 < N → fwd_max_Nd = null
+      - 当前行 close 为 null 或 0 → 整行 fwd / fwd_max 全 null
+    """
+    OFFSETS = (5, 10, 20, 30)
+    MAX_N = max(OFFSETS)
+
+    # 1. 先保证所有列存在（即使 df 为空也返回完整 schema）
+    for n in OFFSETS:
+        if f"fwd_{n}d" not in df.columns:
+            df[f"fwd_{n}d"] = None
+        if f"fwd_max_{n}d" not in df.columns:
+            df[f"fwd_max_{n}d"] = None
+
     if df.empty:
         return df
+
     from datetime import date as _date, timedelta as _td
     from trading_calendar import trading_days
     from core.db import _q_df, QUOTE_GLOB
 
-    c0 = _date.fromisoformat(end)
-    fwd_days = [d.isoformat() for d in trading_days(c0, c0 + _td(days=120))]
-    try:
-        i0 = fwd_days.index(end)
-    except ValueError:
-        i0 = -1
+    df = df.sort_values("trade_date").reset_index(drop=True)
 
-    offsets = (5, 10, 20, 30)
-    n2date = {n: fwd_days[i0 + n] for n in offsets if 0 <= i0 + n < len(fwd_days)}
+    first_d = _date.fromisoformat(str(df.iloc[0]["trade_date"])[:10])
+    last_d = _date.fromisoformat(end)
 
-    if not n2date:
-        for n in offsets:
-            df[f"fwd_{n}d"] = None
+    # 2. 覆盖 df 全部日期 + 未来 MAX_N 个交易日
+    span_days = MAX_N * 3 + 30
+    all_days = [
+        d.isoformat()
+        for d in trading_days(first_d, last_d + _td(days=span_days))
+    ]
+    if not all_days:
         return df
 
-    date_list = list(set(n2date.values()))
-    ph = ",".join(["?"] * len(date_list))
+    # 3. 一次查询所有 trade_date 的 close + high
+    ph = ",".join(["?"] * len(all_days))
     fdf = _q_df(
-        f"SELECT trade_date, close FROM read_parquet({QUOTE_GLOB}, hive_partitioning=true) "
-        f"WHERE code = ? AND trade_date IN ({ph})",
-        [code, *date_list])
-    close_by_date = {str(r["trade_date"])[:10]: float(r["close"])
-                     for _, r in fdf.iterrows() if pd.notna(r["close"])}
+        f"""
+        SELECT trade_date, close, high
+        FROM read_parquet({QUOTE_GLOB}, hive_partitioning=true, union_by_name=true)
+        WHERE code = ? AND trade_date IN ({ph})
+        """,
+        [code, *all_days],
+    )
 
-    for n in offsets:
-        d_fwd = n2date.get(n)
-        if d_fwd is None:
-            df[f"fwd_{n}d"] = None
+    ts_data: dict[str, dict] = {}
+    for _, r in fdf.iterrows():
+        d = str(r["trade_date"])[:10]
+        ts_data[d] = {
+            "close": float(r["close"]) if pd.notna(r["close"]) else None,
+            "high":  float(r["high"])  if pd.notna(r["high"])  else None,
+        }
+
+    td_idx = {d: i for i, d in enumerate(all_days)}
+
+    # 4. 逐行计算
+    results = {n: {"fwd": [], "fwd_max": []} for n in OFFSETS}
+
+    for _, row in df.iterrows():
+        cur_date = str(row["trade_date"])[:10]
+        cur_close = float(row["close"]) if pd.notna(row["close"]) else None
+        cur_i = td_idx.get(cur_date)
+
+        # 快速失败：无价格、或日期不在日历里
+        if cur_close is None or cur_close == 0 or cur_i is None:
+            for n in OFFSETS:
+                results[n]["fwd"].append(None)
+                results[n]["fwd_max"].append(None)
             continue
-        target_close = close_by_date.get(d_fwd)
-        if target_close is None:
-            df[f"fwd_{n}d"] = None
-            continue
-        df[f"fwd_{n}d"] = (target_close / df["close"] - 1) * 100.0
+
+        # 拿未来 MAX_N 天的 [close, high]
+        future = []
+        for k in range(1, MAX_N + 1):
+            if cur_i + k >= len(all_days):
+                break
+            d_fut = all_days[cur_i + k]
+            info = ts_data.get(d_fut, {})
+            future.append({
+                "close": info.get("close"),
+                "high":  info.get("high"),
+            })
+
+        for n in OFFSETS:
+            # 未来交易日不足 N → null
+            if len(future) < n:
+                results[n]["fwd"].append(None)
+                results[n]["fwd_max"].append(None)
+                continue
+
+            # fwd_Nd = close[T+N] / close[T] - 1
+            target_close = future[n - 1]["close"]
+            if target_close is None:
+                results[n]["fwd"].append(None)
+            else:
+                results[n]["fwd"].append((target_close / cur_close - 1) * 100)
+
+            # fwd_max_Nd = max(high[T+1..T+N]) / close[T] - 1
+            window_highs = [
+                x["high"] for x in future[:n] if x["high"] is not None
+            ]
+            if not window_highs:
+                results[n]["fwd_max"].append(None)
+            else:
+                results[n]["fwd_max"].append((max(window_highs) / cur_close - 1) * 100)
+
+    # 5. 写回 df
+    for n in OFFSETS:
+        df[f"fwd_{n}d"] = results[n]["fwd"]
+        df[f"fwd_max_{n}d"] = results[n]["fwd_max"]
 
     return df
 def _query_chart(
@@ -129,13 +207,7 @@ def list_available_indicators() -> list[dict]:
     return list_indicators()
 
 
-def get_stock_chart(
-    code: str,
-    start: str,
-    end: str,
-    indicators: Sequence[str] | None = None,
-) -> pd.DataFrame:
-    """个股 K 线 + 指定指标。indicators=None 时使用默认指标集。"""
+def get_stock_chart(code, start, end, indicators=None):
     if indicators is None:
         indicators = DEFAULT_INDICATORS
     df = _query_chart(
@@ -147,6 +219,7 @@ def get_stock_chart(
         indicators=indicators,
         base_cols=STOCK_BASE_COLS,
     )
+    # ⭐ 追加 fwd_* / fwd_max_*
     df = _add_forward_returns(df, code, end)
     return df
 

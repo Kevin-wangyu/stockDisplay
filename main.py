@@ -97,7 +97,15 @@ def api_concept_date_top10(trade_date: str = Query(..., description="YYYY-MM-DD"
     except Exception as e:
         logger.exception("概念榜单查询失败 %s", trade_date)
         raise HTTPException(status_code=500, detail=str(e))
-
+@app.get("/api/concept/colors")
+def api_concept_colors(trade_date: str = Query(..., description="YYYY-MM-DD")):
+    try:
+        return queries.get_concept_colors_summary(trade_date)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("概念颜色查询失败 %s", trade_date)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/concept/limit_up_stocks")
 def api_concept_limit_up_stocks(

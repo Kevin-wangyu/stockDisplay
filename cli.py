@@ -247,15 +247,63 @@ def cmd_stock_amo(args):
 
 
 def cmd_concept_top10(args):
+    """概念三榜 + 交集选股。
+
+    --only:   picks（只要交集）/ lists（只要三榜）/ all（默认全要）
+    --limit:  作用于 intersection_picks 的条数（如 --limit 20）
+    --columns: 作用于 intersection_picks 的字段（如 --columns code,name,importance_index）
+    """
     from queries import get_concept_date_top10
     r = get_concept_date_top10(args.date)
-    return r
+
+    only = args.only or "all"
+
+    if only == "picks":
+        result = {"intersection_picks": r.get("intersection_picks") or []}
+    elif only == "lists":
+        result = {
+            k: r.get(k)
+            for k in ("market_total_amount", "market_avg_5d",
+                      "market_avg_20d", "top_amount",
+                      "top_pct", "top_limit_up")
+        }
+    else:
+        result = dict(r)
+
+    # 只对 intersection_picks 应用裁剪
+    if only in ("picks", "all"):
+        picks = result.get("intersection_picks") or []
+        if args.limit and args.limit > 0:
+            picks = picks[:args.limit]
+        if args.columns:
+            cols = [c.strip() for c in args.columns.split(",") if c.strip()]
+            picks = [{k: p.get(k) for k in cols} for p in picks]
+        result["intersection_picks"] = picks
+
+    return result
 
 
 def cmd_concept_ladder(args):
+    """涨停天梯。
+
+    --limit:   作用于 stocks 的条数（如 --limit 20）
+    --columns: 作用于 stocks 的字段（如 --columns code,name,importance_index）
+    """
     from queries import get_limit_up_ladder
     r = get_limit_up_ladder(args.date, min_days=args.min_days)
-    return r
+
+    stocks = r.get("stocks") or []
+    if args.limit and args.limit > 0:
+        stocks = stocks[:args.limit]
+    if args.columns:
+        cols = [c.strip() for c in args.columns.split(",") if c.strip()]
+        stocks = [{k: s.get(k) for k in cols} for s in stocks]
+
+    return {
+        "trade_date": r.get("trade_date"),
+        "cached": r.get("cached", True),
+        "stocks": stocks,
+    }
 
 
 def cmd_concept_limitup(args):
@@ -264,6 +312,9 @@ def cmd_concept_limitup(args):
         args.concept_code, args.date, window_days=args.window)
     return r
 
+def cmd_concept_colors(args):
+    from queries import get_concept_colors_summary
+    return get_concept_colors_summary(args.date)
 
 def cmd_concept_gld(args):
     from core.loaders import get_concept_gld
@@ -350,7 +401,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     # 概念下涨停股
     python cli.py concept limitup 880xxx 2024-10-09 --window 10
-
+    # 概念颜色分类
+    python cli.py concept colors 2024-10-09
     # gld / ztnr
     python cli.py concept gld 002693 芯片
     python cli.py concept ztnr 002693 芯片
@@ -430,6 +482,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_t = sub2.add_parser("top10", parents=[common],
                           help="概念三榜 + 交集选股")
     p_t.add_argument("date", help="YYYY-MM-DD")
+    p_t.add_argument("--only", choices=["picks", "lists", "all"],
+                     default="all",
+                     help="只返回 picks（交集）/ lists（三榜）/ all（默认）")
     p_t.set_defaults(func=cmd_concept_top10)
 
     p_l = sub2.add_parser("ladder", parents=[common], help="涨停天梯")
@@ -443,6 +498,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_lu.add_argument("date")
     p_lu.add_argument("--window", type=int, default=10)
     p_lu.set_defaults(func=cmd_concept_limitup)
+
+    p_col = sub2.add_parser("colors", parents=[common],
+                             help="当日概念颜色分类（红/黄/蓝/白）")
+    p_col.add_argument("date", help="YYYY-MM-DD")
+    p_col.set_defaults(func=cmd_concept_colors)
 
     p_gld = sub2.add_parser("gld", parents=[common],
                              help="某股票某概念的关联度")

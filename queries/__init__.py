@@ -18,6 +18,7 @@ from queries.concept import (
     _get_tops_and_scores,
     _build_intersection_picks,
     _compute_concept_scores,
+    get_concept_colors_summary,
 )
 from queries.amo import get_amo_chart
 

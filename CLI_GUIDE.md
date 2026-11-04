@@ -105,6 +105,7 @@ python cli.py trading neighbor 2024-10-09 --direction prev
 | `concept limitup <concept_code> <date>` | 某概念下近 N 日涨停股 |
 | `concept gld <code> <concept>` | 关联度（1~5） |
 | `concept ztnr <code> <concept>` | 入选原因（自然语言） |
+| `concept colors <date>` | 当日概念颜色分类（红/黄/蓝/白，含涨停数/归成比） |
 
 ### 3.4 `trading` — 交易日
 
@@ -128,6 +129,29 @@ python cli.py trading neighbor 2024-10-09 --direction prev
 | `--columns` | 只返回指定列 | `--columns trade_date,close,ma5` |
 
 **优先用 `--output`**：stdout 超过约 50 KB 容易被截断，写文件最稳。
+
+### `concept top10` / `concept ladder` 的专用参数
+
+| 参数 | 作用 | 示例 |
+|---|---|---|
+| `--only` | 只返回 picks / lists / all（仅 top10） | `--only picks` |
+| `--limit` | 交集榜 / 天梯榜的条数上限 | `--limit 20` |
+| `--columns` | 交集榜 / 天梯榜的字段裁剪 | `--columns code,name,importance_index` |
+
+**典型场景**：
+
+```bash
+# 只要交集榜前 20，字段精简
+python cli.py concept top10 2024-10-09 \
+  --only picks --limit 20 \
+  --columns code,name,importance_index,matched_concepts \
+  --output /tmp/picks.json
+
+# 天梯榜前 10
+python cli.py concept ladder 2024-10-09 \
+  --limit 10 \
+  --columns code,name,streak_label,importance_index \
+  --output /tmp/ladder.json
 
 ---
 
@@ -216,6 +240,17 @@ python cli.py concept top10 2024-10-09 --output /tmp/top10.json
 python -c "import json, subprocess; d = json.load(open('/tmp/top10.json')); codes = [p['code'] for p in d['data']['intersection_picks'][:10]]; out = subprocess.check_output(['python', 'cli.py', 'stock', 'sectors', ','.join(codes)]); open('/tmp/sectors.json', 'wb').write(out)"
 ```
 
+### 6.5 快速定位当日主线（红 + 黄）
+
+```bash
+# 拉颜色分类
+python cli.py concept colors 2024-10-09 --output /tmp/colors.json
+
+# 看红色概念（可能最强主线）
+python -c "import json; d=json.load(open('/tmp/colors.json'))['data']; print('红色:', d['counts']['red'], '个'); [print(f\"  {c['name']}: 归成比{c['norm_amount_ratio']}, 涨停{c['limit_up_count']}\") for c in d['red_concepts']]"
+
+# 看黄色概念（次强，两榜共有）
+python -c "import json; d=json.load(open('/tmp/colors.json'))['data']; print('黄色:', d['counts']['yellow'], '个'); [print(f\"  {c['name']}: 涨停{c['limit_up_count']}\") for c in d['yellow_concepts']]"
 ---
 
 ## 7. 错误处理
@@ -348,11 +383,41 @@ main_net_3d, huge_order_net_1d, ...
 | 距今 5~10 交易日 | 有值 | 可能 `null` | `null` | `null` |
 | 距今 < 5 交易日（今天/昨天） | `null` | `null` | `null` | `null` |
 
+**未来最高涨幅**：
+
+| 字段 | 含义 |
+|---|---|
+| `fwd_max_5d` | 未来 5 日内最高价 vs 当日 close 的涨幅 |
+| `fwd_max_10d` | 未来 10 日内最高价 vs 当日 close 的涨幅 |
+| `fwd_max_20d` | 未来 20 日内最高价 vs 当日 close 的涨幅 |
+| `fwd_max_30d` | 未来 30 日内最高价 vs 当日 close 的涨幅 |
+
+- 起点 T+1，终点 T+N（不含当日）
+- 恒有 `fwd_max_Nd >= fwd_Nd`
+- 未来数据不足 N 天 → `null`
+- 未来全跌 → 可能为负
+
+
 **AI 处理规则**：
 
 - ✅ 统计/排序时，先过滤 `fwd_* != null` 再算
 - ❌ 不要用 `fwd_5d or 0`（把 null 当 0 会污染均值）
 - ❌ 不要跨日期比较 fwd（不同查询日的"未来"窗口不同）
+
+
+### 概念颜色分类（`concept colors`）
+
+```json
+{
+  "counts": {"red": 2, "yellow": 3, "blue": 6},
+  "red_concepts": [
+    {"name": "芯片", "norm_amount_ratio": 2.55, "limit_up_count": 5,
+     "rank_a": 1, "rank_p": null, "rank_l": 3}
+  ],
+  "yellow_concepts": [...],
+  "blue_concepts": [...]
+}
+
 ---
 
 ## 9. 性能提示

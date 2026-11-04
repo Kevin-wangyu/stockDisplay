@@ -408,7 +408,76 @@ def _compute_concept_scores(top_amount, top_pct, top_limit_up,
         }
     return scores
 
+def _build_forward_map(codes: list[str], trade_date: str,
+                       offsets=(5, 10, 20, 30)) -> dict:
+    """一次查询，返回未来 N 日的 close + max_high 数据。
 
+    返回:
+      {
+        (code, n): {
+          "close": float | None,        # 未来第 N 个交易日的收盘
+          "max_high": float | None,     # 未来 N 日内（T+1 ~ T+N）的最高价
+        }
+      }
+    """
+    from datetime import date as _date, timedelta as _td
+    from collections import defaultdict
+    from trading_calendar import trading_days
+
+    if not codes:
+        return {}
+
+    c0 = _date.fromisoformat(trade_date)
+    fwd_days = [d.isoformat() for d in trading_days(c0, c0 + _td(days=150))]
+    try:
+        i0 = fwd_days.index(trade_date)
+    except ValueError:
+        return {}
+
+    max_n = max(offsets)
+    future_days = fwd_days[i0 + 1 : i0 + 1 + max_n]
+    if not future_days:
+        return {}
+
+    ph  = ",".join(["?"] * len(codes))
+    ph2 = ",".join(["?"] * len(future_days))
+
+    fdf = _q_df(
+        f"""
+        SELECT code, trade_date, close, high
+        FROM read_parquet({QUOTE_GLOB}, hive_partitioning=true,
+                          union_by_name=true)
+        WHERE trade_date IN ({ph2}) AND code IN ({ph})
+        ORDER BY code, trade_date
+        """, [*future_days, *codes])
+
+    # 按 code 分组
+    by_code = defaultdict(list)
+    for _, r in fdf.iterrows():
+        d = str(r["trade_date"])[:10]
+        if d not in future_days:
+            continue
+        by_code[r["code"]].append({
+            "trade_date": d,
+            "close": float(r["close"]) if pd.notna(r["close"]) else None,
+            "high":  float(r["high"])  if pd.notna(r["high"])  else None,
+        })
+
+    result = {}
+    for code, rows in by_code.items():
+        rows.sort(key=lambda x: x["trade_date"])
+        for n in offsets:
+            window = rows[:n]
+            # 数据不足 n 天 → close 和 max_high 都为 None
+            if len(window) < n:
+                result[(code, n)] = {"close": None, "max_high": None}
+                continue
+            close_n = window[n - 1]["close"]
+            highs = [r["high"] for r in window if r["high"] is not None]
+            max_high = max(highs) if highs else None
+            result[(code, n)] = {"close": close_n, "max_high": max_high}
+
+    return result
 
 def _build_intersection_picks(top_amount, top_pct, top_limit_up,
                               trade_date, market_total, concept_scores,
@@ -504,33 +573,7 @@ def _build_intersection_picks(top_amount, top_pct, top_limit_up,
         """, [trade_date, *codes])
     qmap = {r["code"]: r for _, r in quote_df.iterrows()}
 
-    c0 = _date.fromisoformat(trade_date)
-    fwd_days = [d.isoformat() for d in trading_days(c0, c0 + _td(days=120))]
-    try:
-        i0 = fwd_days.index(trade_date)
-    except ValueError:
-        i0 = -1
-
-    offsets = (5, 10, 20, 30)
-    n2date = {n: fwd_days[i0 + n] for n in offsets
-              if 0 <= i0 + n < len(fwd_days)}
-
-    fmap = {}
-    if n2date:
-        date_list = list(set(n2date.values()))
-        ph2 = ",".join(["?"] * len(date_list))
-        fdf = _q_df(
-            f"""
-            SELECT code, trade_date, close
-            FROM read_parquet({QUOTE_GLOB}, hive_partitioning=true,
-                              union_by_name=true)
-            WHERE trade_date IN ({ph2}) AND code IN ({ph})
-            """, [*date_list, *codes])
-        date2n = {d: n for n, d in n2date.items()}
-        for _, r in fdf.iterrows():
-            n = date2n.get(str(r["trade_date"])[:10])
-            if n is not None:
-                fmap[(r["code"], n)] = r["close"]
+    fwd_map = _build_forward_map(codes, trade_date, offsets=(5, 10, 20, 30))    
 
     def _num(x):
         if x is None or not pd.notna(x):
@@ -559,6 +602,8 @@ def _build_intersection_picks(top_amount, top_pct, top_limit_up,
                 "medium_order_net_norm": None, "small_order_net_norm": None,
                 "fwd_5d": None, "fwd_10d": None,
                 "fwd_20d": None, "fwd_30d": None,
+                "fwd_max_5d": None, "fwd_max_10d": None,
+                "fwd_max_20d": None, "fwd_max_30d": None,
             })
             continue
 
@@ -567,12 +612,23 @@ def _build_intersection_picks(top_amount, top_pct, top_limit_up,
         trate  = _num(r["turnover_rate"])
         n_h, n_b = _num(r["huge_order_net"]),   _num(r["big_order_net"])
         n_m, n_s = _num(r["medium_order_net"]), _num(r["small_order_net"])
-
         def _fwd(n):
+            """未来第 N 个交易日的收盘涨幅。"""
             if close is None or close == 0:
                 return None
-            f = fmap.get((p["code"], n))
-            return (f / close - 1) * 100 if f is not None else None
+            entry = fwd_map.get((p["code"], n))
+            if entry is None or entry["close"] is None:
+                return None
+            return (entry["close"] / close - 1) * 100
+
+        def _fwd_max(n):
+            """未来 N 日内最高价距当前 close 的最大涨幅。"""
+            if close is None or close == 0:
+                return None
+            entry = fwd_map.get((p["code"], n))
+            if entry is None or entry["max_high"] is None:
+                return None
+            return (entry["max_high"] / close - 1) * 100
 
         p.update({
             "close": close,
@@ -588,6 +644,10 @@ def _build_intersection_picks(top_amount, top_pct, top_limit_up,
             "small_order_net_norm":  _norm(n_s, amount, trate),
             "fwd_5d": _fwd(5), "fwd_10d": _fwd(10),
             "fwd_20d": _fwd(20), "fwd_30d": _fwd(30),
+            "fwd_max_5d":  _fwd_max(5),
+            "fwd_max_10d": _fwd_max(10),
+            "fwd_max_20d": _fwd_max(20),
+            "fwd_max_30d": _fwd_max(30),
         })
     # ⭐ 归一化 importance（当日相对强度）
     if picks:
@@ -626,7 +686,161 @@ def get_concept_date_top10(trade_date: str) -> dict:
         "concept_colors": concept_colors,
     })
 
+def _compute_concept_colors(top_amount, top_pct, top_limit_up) -> dict:
+    """计算概念颜色分类（与前端 v1ComputeGlobalColors 规则一致）。
 
+    ⭐ 关键：归成比榜只用 is_strong=True 的概念（排除补齐的）。
+
+    规则：
+      - red:   归成比前5（只含 is_strong）且（涨跌幅前5 或 涨停数前5）
+      - yellow: 任意两榜共有（不含红）
+      - blue:  某单榜前5（不含红黄）
+      - white: 其它
+    """
+    strong_amount = [it for it in (top_amount or [])
+                     if it.get("is_strong", True)]
+    S = {it["name"] for it in strong_amount}
+    P = {it["name"] for it in (top_pct or [])}
+    L = {it["name"] for it in (top_limit_up or [])}
+
+    A5 = {it["name"] for it in strong_amount[:5]}
+    P5 = {it["name"] for it in (top_pct or [])[:5]}
+    L5 = {it["name"] for it in (top_limit_up or [])[:5]}
+
+    common2 = set()
+    for n in S:
+        if n in P or n in L:
+            common2.add(n)
+    for n in P:
+        if n in L:
+            common2.add(n)
+
+    top5_union = A5 | P5 | L5
+    all_names = S | P | L
+
+    colors = {}
+    red_list = []
+    yellow_list = []
+    blue_list = []
+
+    for n in all_names:
+        if n in A5 and (n in P5 or n in L5):
+            colors[n] = "red"
+            red_list.append(n)
+        elif n in common2:
+            colors[n] = "yellow"
+            yellow_list.append(n)
+        elif n in top5_union:
+            colors[n] = "blue"
+            blue_list.append(n)
+        else:
+            colors[n] = "white"
+
+    return {
+        "colors": colors,
+        "red": red_list,
+        "yellow": yellow_list,
+        "blue": blue_list,
+    }
+
+
+def get_concept_colors_summary(trade_date: str) -> dict:
+    """当日概念颜色分类 + 红/黄/蓝概念详情。
+
+    返回:
+      {
+        "trade_date": "2024-10-09",
+        "counts": {"red": 2, "yellow": 3, "blue": 5},
+        "red_concepts": [
+          {"name": "芯片", "norm_amount_ratio": 2.55, "amount_pct": 12.14,
+           "limit_up_count": 5, "pct_change": 3.2,
+           "rank_a": 1, "rank_p": None, "rank_l": 3, "is_strong": true},
+          ...
+        ],
+        "yellow_concepts": [...],
+        "blue_concepts": [...]
+      }
+    """
+    market_total, top_amount, top_pct, top_limit_up, _ = \
+        _get_tops_and_scores(trade_date)
+
+    color_info = _compute_concept_colors(top_amount, top_pct, top_limit_up)
+
+    a_map = {it["name"]: it for it in (top_amount or [])}
+    p_map = {it["name"]: it for it in (top_pct or [])}
+    l_map = {it["name"]: it for it in (top_limit_up or [])}
+
+    def _build_detail(name):
+        info = {"name": name}
+        a = a_map.get(name)
+        p = p_map.get(name)
+        l = l_map.get(name)
+
+        if a:
+            info["norm_amount_ratio"] = a.get("norm_amount_ratio")
+            info["amount_pct"] = a.get("amount_pct")
+            info["is_strong"] = a.get("is_strong", True)
+        else:
+            info["norm_amount_ratio"] = None
+            info["amount_pct"] = None
+            info["is_strong"] = None
+
+        if l:
+            info["limit_up_count"] = l.get("limit_up_count", 0)
+        elif a:
+            info["limit_up_count"] = a.get("limit_up_count", 0)
+        else:
+            info["limit_up_count"] = 0
+
+        if p:
+            info["pct_change"] = p.get("pct_change")
+        elif a:
+            info["pct_change"] = a.get("pct_change")
+        else:
+            info["pct_change"] = None
+
+        # 排名（帮助判断为什么是红/黄）
+        info["rank_a"] = next(
+            (i + 1 for i, it in enumerate(top_amount or [])
+             if it["name"] == name), None)
+        info["rank_p"] = next(
+            (i + 1 for i, it in enumerate(top_pct or [])
+             if it["name"] == name), None)
+        info["rank_l"] = next(
+            (i + 1 for i, it in enumerate(top_limit_up or [])
+             if it["name"] == name), None)
+
+        return info
+
+    red = [_build_detail(n) for n in color_info["red"]]
+    yellow = [_build_detail(n) for n in color_info["yellow"]]
+    blue = [_build_detail(n) for n in color_info["blue"]]
+
+    # 排序：红/蓝按归成比降序，黄按涨停数降序（更贴合"两榜共有"的语义）
+    def _sort_red(x):
+        v = x.get("norm_amount_ratio")
+        return -(v if v is not None else -1e9)
+
+    def _sort_yellow(x):
+        lu = x.get("limit_up_count") or 0
+        r = x.get("norm_amount_ratio") or 0
+        return (-lu, -r)
+
+    red.sort(key=_sort_red)
+    yellow.sort(key=_sort_yellow)
+    blue.sort(key=_sort_red)
+
+    return {
+        "trade_date": trade_date,
+        "counts": {
+            "red": len(red),
+            "yellow": len(yellow),
+            "blue": len(blue),
+        },
+        "red_concepts": red,
+        "yellow_concepts": yellow,
+        "blue_concepts": blue,
+    }
 
 def _resolve_map_name(cf_name: str) -> str | None:
     """把 concept_flow 的概念名翻译成 stock_sector_map 里的概念名。"""
@@ -899,32 +1113,8 @@ def get_limit_up_ladder(trade_date: str, min_days: int = 2) -> dict:
     # ── pct_change 统一走 daily_pct ──
     pct_map = _load_pct_today(trade_date)
 
-    # ── 未来 N 日 close ──
-    c0 = _date.fromisoformat(trade_date)
-    fwd_days = [d.isoformat() for d in trading_days(c0, c0 + _td(days=120))]
-    try:
-        i0 = fwd_days.index(trade_date)
-    except ValueError:
-        i0 = -1
-    offsets = (5, 10, 20, 30)
-    n2date = {n: fwd_days[i0 + n] for n in offsets
-              if 0 <= i0 + n < len(fwd_days)}
-    fmap = {}
-    if n2date:
-        date_list = list(set(n2date.values()))
-        ph2 = ",".join(["?"] * len(date_list))
-        fdf = _q_df(
-            f"""
-            SELECT code, trade_date, close
-            FROM read_parquet({QUOTE_GLOB}, hive_partitioning=true,
-                              union_by_name=true)
-            WHERE trade_date IN ({ph2}) AND code IN ({ph})
-            """, [*date_list, *codes])
-        date2n = {d: n for n, d in n2date.items()}
-        for _, r in fdf.iterrows():
-            n = date2n.get(str(r["trade_date"])[:10])
-            if n is not None:
-                fmap[(r["code"], n)] = r["close"]
+    # ⭐ 一次性构建未来 N 日 close + max_high
+    fwd_map = _build_forward_map(codes, trade_date, offsets=(5, 10, 20, 30))
 
     def _num(x):
         if x is None or not pd.notna(x):
@@ -985,6 +1175,8 @@ def get_limit_up_ladder(trade_date: str, min_days: int = 2) -> dict:
                 "medium_order_net_norm": None, "small_order_net_norm": None,
                 "fwd_5d": None, "fwd_10d": None,
                 "fwd_20d": None, "fwd_30d": None,
+                "fwd_max_5d": None, "fwd_max_10d": None,
+                "fwd_max_20d": None, "fwd_max_30d": None,
             })
             continue
 
@@ -997,8 +1189,18 @@ def get_limit_up_ladder(trade_date: str, min_days: int = 2) -> dict:
         def _fwd(n):
             if close is None or close == 0:
                 return None
-            f = fmap.get((code, n))
-            return (f / close - 1) * 100 if f is not None else None
+            entry = fwd_map.get((code, n))
+            if entry is None or entry["close"] is None:
+                return None
+            return (entry["close"] / close - 1) * 100
+
+        def _fwd_max(n):
+            if close is None or close == 0:
+                return None
+            entry = fwd_map.get((code, n))
+            if entry is None or entry["max_high"] is None:
+                return None
+            return (entry["max_high"] / close - 1) * 100
 
         stocks.append({
             "code": code, "name": name,
@@ -1019,6 +1221,10 @@ def get_limit_up_ladder(trade_date: str, min_days: int = 2) -> dict:
             "small_order_net_norm":  _norm(n_s, amount, trate),
             "fwd_5d": _fwd(5), "fwd_10d": _fwd(10),
             "fwd_20d": _fwd(20), "fwd_30d": _fwd(30),
+            "fwd_max_5d":  _fwd_max(5),
+            "fwd_max_10d": _fwd_max(10),
+            "fwd_max_20d": _fwd_max(20),
+            "fwd_max_30d": _fwd_max(30),
         })
 
     stocks.sort(key=lambda x: (-x["streak_days"], -x["importance_index"], x["code"]))
