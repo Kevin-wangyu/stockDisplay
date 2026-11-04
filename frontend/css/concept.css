@@ -1295,3 +1295,22 @@
 .v2-stock-row .c-num.imp-low  { color: var(--text-dim); }
 /* 可选：关联度 4/5 突出 */
 .v2-stock-row .c-gld-high { color: #ef5350; }
+/* ── 天梯榜列头：可点击排序 ── */
+.v1-ladder-head > span[data-key] {
+  cursor: pointer;
+  transition: color .12s;
+  user-select: none;
+}
+.v1-ladder-head > span[data-key]:hover {
+  color: var(--text);
+}
+.v1-ladder-head > span[data-key].sorted-asc::after {
+  content: " ▲";
+  color: var(--accent);
+  font-size: 9px;
+}
+.v1-ladder-head > span[data-key].sorted-desc::after {
+  content: " ▼";
+  color: var(--accent);
+  font-size: 9px;
+}

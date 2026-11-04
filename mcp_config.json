@@ -1,0 +1,11 @@
+{
+  "security": {
+    "whitelisted_directories": ["D:\\Programs\\github-app\\stockDisplay"],
+    "commands": {
+      "read": ["python cli.py"],
+      "write": [],
+      "system": [],
+      "blocked": ["python", "bash", "sh", "cmd", "powershell", "del", "rmdir"]
+    }
+  }
+}

@@ -50,8 +50,8 @@ from etl.registry import DATA_TYPES
 # 各类型的 words 前缀规则（lambda 仍然放这里，因为逻辑不通用）
 _WORDS_FMT = {
     "stock":         lambda d, f: f"{d} AND ({f})",
-    "industry":      lambda d, f: f"{d}通达信二级行业{f}",
-    "concept":       lambda d, f: f"所有概念指数{d}{f}",
+    "industry":      lambda d, f: f"{d}{f}",
+    "concept":       lambda d, f: f"{d}{f}",
     "stock_concept": lambda d, f: f"{d} AND ({f})",
     "amo":           lambda d, f: f"{d} AND ({f})",
 }

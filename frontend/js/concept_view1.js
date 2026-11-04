@@ -1,6 +1,9 @@
 // ─────────── 界面 1：三榜 + 交集选股 ───────────
 const v1SortState = { key: "importance_index", dir: "desc" };
 let v1LastPicks = [];
+// ⭐ 天梯榜独立排序状态（与交集榜互不影响）
+const v1LadderSortState = { key: null, dir: null };   // null = 默认后端排序
+let v1LadderLastStocks = [];
 // ─── 颜色状态（每榜独立 + 全局共有）───
 const V1_COLOR_ORDER = { red: 0, yellow: 1, blue: 2, white: 3 };
 
@@ -79,7 +82,11 @@ const v1El = {
 };
 const v1FmtYi  = (v) => (v / 1e8).toFixed(2) + " 亿";
 const v1FmtZY  = (v) => (v / 1e12).toFixed(2) + " 兆";
-const v1FmtPct = (v) => (v >= 0 ? "+" : "") + v.toFixed(2) + "%";
+const v1FmtPct = (v) => {
+  if (v == null || Number.isNaN(Number(v))) return "-";
+  const n = Number(v);
+  return (n >= 0 ? "+" : "") + n.toFixed(2) + "%";
+};
 function v1FmtBigShort(v) {
   if (v == null) return "-";
   const abs = Math.abs(v);
@@ -211,7 +218,10 @@ function v1RenderAmount(items, marketTotal) {
 }
 
 function v1RenderPct(items) {
-  v1RenderList(v1El.pctList, items, {
+  // 过滤 null（虽然后端已经过滤过，双保险）
+  const safe = (items || []).filter(it => it.pct_change != null);
+
+  v1RenderList(v1El.pctList, safe, {
     weight:     (it) => it.pct_change,
     fillClass:  (it) => it.pct_change >= 0 ? "pos" : "neg",
     inside:     ()   => "",
@@ -301,8 +311,49 @@ function v1ImpClass(v, pct) {
   if (v >= 0.6) return "mid";
   return "low";
 }
+function v1LadderSortedStocks(stocks) {
+  if (!stocks || !stocks.length) return [];
+  const { key, dir } = v1LadderSortState;
+  if (!key || !dir) return stocks.slice();   // 无排序 → 保持后端默认顺序
+
+  const arr = stocks.slice();
+  arr.sort((a, b) => {
+    const va = a[key], vb = b[key];
+    const aNull = va == null || (typeof va === "number" && Number.isNaN(va));
+    const bNull = vb == null || (typeof vb === "number" && Number.isNaN(vb));
+    if (aNull && bNull) return 0;
+    if (aNull) return 1;
+    if (bNull) return -1;
+
+    let cmp;
+    if (typeof va === "number" && typeof vb === "number") {
+      cmp = va - vb;
+    } else if (Array.isArray(va) && Array.isArray(vb)) {
+      // concepts / matched_cfs_detail 等数组：按元素个数排
+      cmp = va.length - vb.length;
+    } else {
+      cmp = String(va).localeCompare(String(vb), "zh");
+    }
+    return dir === "desc" ? -cmp : cmp;
+  });
+  return arr;
+}
+
+function v1UpdateLadderSortIndicator() {
+  document.querySelectorAll(".v1-ladder-head > span[data-key]").forEach(el => {
+    el.classList.remove("sorted-asc", "sorted-desc");
+    if (el.dataset.key === v1LadderSortState.key && v1LadderSortState.dir) {
+      el.classList.add(
+        v1LadderSortState.dir === "desc" ? "sorted-desc" : "sorted-asc");
+    }
+  });
+}
 function v1RenderLadder(data) {
-  const stocks = data?.stocks || [];
+  // ⭐ 缓存原始数据（供排序点击重新渲染）
+  v1LadderLastStocks = (data?.stocks) || [];
+
+  // ⭐ 应用排序
+  const stocks = v1LadderSortedStocks(v1LadderLastStocks);
 
   const headHtml = `
     <div class="v1-ladder-head">
@@ -331,6 +382,7 @@ function v1RenderLadder(data) {
     return;
   }
 
+  // ⭐ 后续渲染逻辑完全不变（保留原有 MAX_SHOW / tag / 列值）
   const MAX_SHOW = 5;
   const rowsHtml = stocks.map(s => {
     // ⭐ 构建 gld 映射（命中三榜的概念才有）
@@ -397,6 +449,7 @@ function v1RenderLadder(data) {
   }).join("");
 
   v1El.ladderList.innerHTML = headHtml + rowsHtml;
+  v1UpdateLadderSortIndicator();  
 }
 function v1RenderPicks(picks) {
   const sorted = (picks && picks.length) ? v1SortedPicks(picks) : [];
@@ -607,6 +660,28 @@ async function v1ShiftDate(direction) {
     if (btnN) btnN.disabled = false;
   }
 }
+// ─── 天梯榜列头点击排序（document 委托，重建后生效）───
+document.addEventListener("click", (e) => {
+  const head = e.target.closest(".v1-ladder-head > span[data-key]");
+  if (!head) return;
+
+  e.stopPropagation();
+  e.preventDefault();
+
+  const key = head.dataset.key;
+  if (v1LadderSortState.key === key && v1LadderSortState.dir) {
+    // 同列：切换方向
+    v1LadderSortState.dir = v1LadderSortState.dir === "desc" ? "asc" : "desc";
+  } else {
+    // 新列：默认降序
+    v1LadderSortState.key = key;
+    v1LadderSortState.dir = "desc";
+  }
+
+  if (v1LadderLastStocks.length) {
+    v1RenderLadder({ stocks: v1LadderLastStocks });
+  }
+}, true);
 document.addEventListener("click", (e) => {
   const btn = e.target.closest("#v1PrevDay, #v1NextDay");
   if (!btn) return;

@@ -31,9 +31,9 @@ def _is_trading_day(d: date) -> bool:
     return bool(trading_days(d, d))
 
 
-def _prompt_cookie_and_fetch(target_date: date) -> None:
-    """统一流程：提示输入 cookie → 写入 config → 重载 → 拉数据。"""
-    prompt_and_reload()
+def _prompt_cookie_and_fetch(target_date: date, force_manual: bool = False) -> None:
+    """统一流程：获取 cookie → 写入 config → 重载 → 拉数据。"""
+    prompt_and_reload(force_manual=force_manual)
 
     print(f"[serve] 开始拉取 {target_date} 数据 …")
     try:
@@ -45,7 +45,7 @@ def _prompt_cookie_and_fetch(target_date: date) -> None:
         print("[serve] 继续启动服务，请手动检查数据/日志")
 
 
-def ensure_data_ready() -> None:
+def ensure_data_ready(force_manual_cookie: bool = False) -> None:
     """按时间窗处理数据更新。
 
     ┌──────────────┬────────────────────────────────────────────┐
@@ -71,7 +71,7 @@ def ensure_data_ready() -> None:
             logger.info(f"[serve] 上一交易日 {prev_d} 已有数据，跳过 cookie 输入")
             return
         logger.info(f"[serve] 检测到上一交易日 {prev_d} 无数据，开始补拉…")
-        _prompt_cookie_and_fetch(prev_d)
+        _prompt_cookie_and_fetch(prev_d, force_manual=force_manual_cookie)
         return
 
     # ── 窗口 2：9:15 ~ 15:30，盘中，拒绝补数据 ──
@@ -93,4 +93,4 @@ def ensure_data_ready() -> None:
         logger.info(f"[serve] 今日（{today}）已有数据，跳过 cookie 输入")
         return
     logger.info(f"[serve] 检测到今日（{today}）无数据，开始拉取…")
-    _prompt_cookie_and_fetch(today)
+    _prompt_cookie_and_fetch(today, force_manual=force_manual_cookie)

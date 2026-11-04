@@ -16,7 +16,50 @@ from indicators import SQL_INDICATORS, PYTHON_INDICATORS, list_indicators
 from trading_calendar import trading_days
 
 logger = logging.getLogger(__name__)
+def _add_forward_returns(df: pd.DataFrame, code: str, end: str) -> pd.DataFrame:
+    """给个股 K 线追加未来 5/10/20/30 日涨幅。"""
+    if df.empty:
+        return df
+    from datetime import date as _date, timedelta as _td
+    from trading_calendar import trading_days
+    from core.db import _q_df, QUOTE_GLOB
 
+    c0 = _date.fromisoformat(end)
+    fwd_days = [d.isoformat() for d in trading_days(c0, c0 + _td(days=120))]
+    try:
+        i0 = fwd_days.index(end)
+    except ValueError:
+        i0 = -1
+
+    offsets = (5, 10, 20, 30)
+    n2date = {n: fwd_days[i0 + n] for n in offsets if 0 <= i0 + n < len(fwd_days)}
+
+    if not n2date:
+        for n in offsets:
+            df[f"fwd_{n}d"] = None
+        return df
+
+    date_list = list(set(n2date.values()))
+    ph = ",".join(["?"] * len(date_list))
+    fdf = _q_df(
+        f"SELECT trade_date, close FROM read_parquet({QUOTE_GLOB}, hive_partitioning=true) "
+        f"WHERE code = ? AND trade_date IN ({ph})",
+        [code, *date_list])
+    close_by_date = {str(r["trade_date"])[:10]: float(r["close"])
+                     for _, r in fdf.iterrows() if pd.notna(r["close"])}
+
+    for n in offsets:
+        d_fwd = n2date.get(n)
+        if d_fwd is None:
+            df[f"fwd_{n}d"] = None
+            continue
+        target_close = close_by_date.get(d_fwd)
+        if target_close is None:
+            df[f"fwd_{n}d"] = None
+            continue
+        df[f"fwd_{n}d"] = (target_close / df["close"] - 1) * 100.0
+
+    return df
 def _query_chart(
     glob: str,
     key_col: str,
@@ -95,7 +138,7 @@ def get_stock_chart(
     """个股 K 线 + 指定指标。indicators=None 时使用默认指标集。"""
     if indicators is None:
         indicators = DEFAULT_INDICATORS
-    return _query_chart(
+    df = _query_chart(
         glob=QUOTE_GLOB,
         key_col="code",
         key_val=code,
@@ -104,6 +147,8 @@ def get_stock_chart(
         indicators=indicators,
         base_cols=STOCK_BASE_COLS,
     )
+    df = _add_forward_returns(df, code, end)
+    return df
 
 
 

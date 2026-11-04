@@ -55,14 +55,39 @@ def _clean_concept_rows(df):
         out.append({
             "code":  r["code"],
             "name":  r["name"],
-            "amount":           _safe(r["amount"]),
-            "turnover_rate":    _safe(r["turnover_rate"]),
-            "total_market_cap": _safe(r["total_market_cap"]),
-            "pct_change":       _safe(r["pct_change"]),
+            "amount":           float(r["amount"])           if pd.notna(r["amount"])           else 0.0,
+            "turnover_rate":    float(r["turnover_rate"])    if pd.notna(r["turnover_rate"])    else 0.0,
+            "total_market_cap": float(r["total_market_cap"]) if pd.notna(r["total_market_cap"]) else 0.0,
+            "pct_change":       float(r["pct_change"])       if pd.notna(r["pct_change"])       else None,
         })
     return out
 
+def _compute_top_pct(base_df, topn=10):
+    """涨跌幅榜：排除 amount=0 且 pct_change=0 的"假 0"（概念不存在）。
 
+    判定：
+      - pct_change is null      → 排除（无数据）
+      - pct_change == 0 且 amount == 0 → 排除（假 0，概念当天不存在）
+      - pct_change == 0 且 amount > 0  → 保留（真 0，存在但没涨跌）
+      - pct_change != 0         → 保留
+    """
+    df = base_df.copy()
+
+    amount_safe = pd.to_numeric(df["amount"], errors="coerce").fillna(0)
+    pct_safe = pd.to_numeric(df["pct_change"], errors="coerce")
+
+    # 假 0：pct=0 且 amount=0
+    is_fake_zero = (pct_safe == 0) & (amount_safe == 0)
+
+    mask = pct_safe.notna() & ~is_fake_zero
+    df = df[mask]
+
+    if df.empty:
+        logger.warning("[top_pct] 无有效涨跌幅数据（全为 null 或假 0）")
+        return []
+
+    top = df.nlargest(topn, "pct_change")
+    return _clean_concept_rows(top)
 
 def _compute_top_limit_up(base_df, trade_date, topn=10):
     """按涨停数降序取 TOP10；不足用成交额补齐。向量化。"""
@@ -255,7 +280,7 @@ def _get_tops_and_scores(trade_date: str):
         raise ValueError(f"{trade_date} 无概念数据")
 
     top_amount   = _compute_top_amount_by_ratio(base, trade_date, market_total, topn=10)
-    top_pct      = _clean_concept_rows(base.nlargest(10, "pct_change"))
+    top_pct      = _compute_top_pct(base, topn=10)
     top_limit_up = _compute_top_limit_up(base, trade_date, topn=10)
 
     _enrich_with_stocks([top_amount, top_pct, top_limit_up], trade_date)

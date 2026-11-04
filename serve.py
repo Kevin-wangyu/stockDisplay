@@ -43,6 +43,8 @@ def parse_args() -> argparse.Namespace:
                    help="启动时检查最近 N 个交易日的整行缺失（默认 5，0=不检查）")
     p.add_argument("--auto-backfill-missing", action="store_true",
                    help="整行缺失时用 eltdx 自动补全（默认只报告）")
+    p.add_argument("--force-manual-cookie", action="store_true",
+                help="跳过自动获取 ASPSessionID，强制手动输入（调试用）")
     return p.parse_args()
 
 
@@ -52,7 +54,7 @@ def main() -> None:
 
     # ── 1. 按时间窗更新数据 ──
     from startup.data_ready import ensure_data_ready
-    ensure_data_ready()
+    ensure_data_ready(force_manual_cookie=args.force_manual_cookie)
 
     # ── 2. 增量 ETL ──
     if args.skip_etl:

@@ -57,6 +57,19 @@ class TDXXiaoda:
 
     # ── Cookie ──
     def _auto_cookie(self) -> str:
+        """自动获取 ASPSessionID：TOUCH 端点优先，browser_cookie3 回退。"""
+        # 1. 优先 TOUCH 匿名获取（不依赖浏览器登录态）
+    # 1. 优先 TOUCH / 缓存（不依赖浏览器登录态）
+        try:
+            from core.aspsession import get_aspsessionid_with_cache
+            sid = get_aspsessionid_with_cache()
+            if sid:
+                logger.info("ASPSessionID 来源: TOUCH/缓存")
+                return f"ASPSessionID={sid};"
+        except Exception as e:
+            logger.debug("TOUCH/缓存失败: %s", e)
+
+        # 2. 回退到 browser_cookie3（从浏览器读登录态）
         for name, loader in [
             ("edge", browser_cookie3.edge),
             ("chrome", browser_cookie3.chrome),
@@ -70,7 +83,11 @@ class TDXXiaoda:
                         return f"ASPSessionID={c.value};"
             except Exception as exc:
                 logger.debug("%s 读取失败: %s", name, exc)
-        raise RuntimeError("所有浏览器都读不到 ASPSessionID，请手工传入 cookie=")
+
+        raise RuntimeError(
+            "ASPSessionID 自动获取失败（TOUCH + 浏览器均无效），"
+            "请通过 serve.py 手动输入"
+        )
 
     # ── 请求头 / 冷却 ──
     def _common_headers(self) -> dict:
