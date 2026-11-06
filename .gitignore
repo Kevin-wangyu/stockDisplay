@@ -13,6 +13,8 @@ test*
 *.zip
 *.7z
 .python_path
+jdwz*
+wzryzk*
 
 # 系统/编辑器缓存
 .DS_Store

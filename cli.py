@@ -169,7 +169,44 @@ def _trim(data, limit, columns):
     if limit and limit > 0:
         data = data[:limit]
     return data
+# ─── 交集榜可排序字段（必须实际存在于 picks）───
+PICKS_SORTABLE_FIELDS = {
+    "code", "name", "match_count", "matched_concepts",
+    "importance_index", "importance_pct", "rank_in_picks", "total_in_picks",
+    "close", "pct_change", "turnover_rate", "hot_rank", "amount",
+    "huge_order_net", "big_order_net", "medium_order_net", "small_order_net",
+    "huge_order_net_norm", "big_order_net_norm",
+    "medium_order_net_norm", "small_order_net_norm",
+    "fwd_5d", "fwd_10d", "fwd_20d", "fwd_30d",
+    "fwd_max_5d", "fwd_max_10d", "fwd_max_20d", "fwd_max_30d",
+}
 
+
+def _sort_picks(picks, sort_by, sort_dir="desc"):
+    """按指定字段排序，null 永远排最后。"""
+    from functools import cmp_to_key
+    if not picks or not sort_by:
+        return picks
+
+    def _cmp(a, b):
+        va = a.get(sort_by)
+        vb = b.get(sort_by)
+        an = va is None
+        bn = vb is None
+        if an and bn:
+            return 0
+        if an:
+            return 1
+        if bn:
+            return -1
+        if isinstance(va, (int, float)) and isinstance(vb, (int, float)):
+            cmp = va - vb
+        else:
+            sa, sb = str(va), str(vb)
+            cmp = 1 if sa > sb else (-1 if sa < sb else 0)
+        return -cmp if sort_dir == "desc" else cmp
+
+    return sorted(picks, key=cmp_to_key(_cmp))
 
 def cmd_list_codes(args):
     from queries import list_codes
@@ -249,39 +286,79 @@ def cmd_stock_amo(args):
 def cmd_concept_top10(args):
     """概念三榜 + 交集选股。
 
-    --only:   picks（只要交集）/ lists（只要三榜）/ all（默认全要）
-    --limit:  作用于 intersection_picks 的条数（如 --limit 20）
-    --columns: 作用于 intersection_picks 的字段（如 --columns code,name,importance_index）
+    --only picks       只返回交集榜
+    --only lists       只返回三榜
+    --only all         全部（默认）
+
+    --limit N          排序后取前 N 条；--limit 0 或不传 → 全量
+    --sort-by FIELD    排序字段（默认 importance_index）
+    --sort-dir asc/desc 排序方向（默认 desc）
+    --columns a,b,c    字段裁剪（可叠加 --limit）
     """
-    from queries import get_concept_date_top10
-    r = get_concept_date_top10(args.date)
+    from queries import (
+        get_concept_date_top10,
+        _get_tops_and_scores,
+        _build_intersection_picks,
+    )
 
     only = args.only or "all"
+    sort_by = getattr(args, "sort_by", None) or "importance_index"
+    sort_dir = getattr(args, "sort_dir", None) or "desc"
+    limit = args.limit or 0
 
-    if only == "picks":
-        result = {"intersection_picks": r.get("intersection_picks") or []}
-    elif only == "lists":
-        result = {
+    # ⭐ 校验排序字段
+    if sort_by not in PICKS_SORTABLE_FIELDS:
+        raise ValueError(
+            f"不支持的排序字段: {sort_by}\n"
+            f"可选: {sorted(PICKS_SORTABLE_FIELDS)}"
+        )
+
+    # 三榜基础数据（lru_cache，快）
+    r = get_concept_date_top10(args.date)
+
+    if only == "lists":
+        return {
             k: r.get(k)
             for k in ("market_total_amount", "market_avg_5d",
                       "market_avg_20d", "top_amount",
                       "top_pct", "top_limit_up")
         }
+
+    # ⭐ 判断是否需要全量重算：
+    #    - 需要超过 40 条（limit > 40 或 limit=0 全量）
+    #    - 或按非 importance_index 字段排序
+    need_full = (
+        limit <= 0 or limit > 40 or sort_by != "importance_index"
+    )
+
+    if need_full:
+        # 全量重算（实时，约 0.3~1s）
+        mt, ta, tp, tl, cs = _get_tops_and_scores(args.date)
+        picks = _build_intersection_picks(
+            ta, tp, tl, args.date, mt, cs, topn=None)
     else:
-        result = dict(r)
+        # 复用缓存（parquet，~毫秒级）
+        picks = r.get("intersection_picks") or []
 
-    # 只对 intersection_picks 应用裁剪
-    if only in ("picks", "all"):
-        picks = result.get("intersection_picks") or []
-        if args.limit and args.limit > 0:
-            picks = picks[:args.limit]
-        if args.columns:
-            cols = [c.strip() for c in args.columns.split(",") if c.strip()]
-            picks = [{k: p.get(k) for k in cols} for p in picks]
-        result["intersection_picks"] = picks
+    # 排序（--sort-by / --sort-dir）
+    picks = _sort_picks(picks, sort_by, sort_dir)
 
+    # 截断（--limit）
+    if limit > 0:
+        picks = picks[:limit]
+
+    # 字段裁剪（--columns）
+    if args.columns:
+        cols = [c.strip() for c in args.columns.split(",") if c.strip()]
+        picks = [{k: p.get(k) for k in cols} for p in picks]
+
+    if only == "picks":
+        return {"intersection_picks": picks}
+
+    # only == all
+    result = dict(r)
+    result["intersection_picks"] = picks
     return result
-
 
 def cmd_concept_ladder(args):
     """涨停天梯。
@@ -485,6 +562,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_t.add_argument("--only", choices=["picks", "lists", "all"],
                      default="all",
                      help="只返回 picks（交集）/ lists（三榜）/ all（默认）")
+    p_t.add_argument("--sort-by", default="importance_index",
+                     help=f"排序字段（默认 importance_index），可选: "
+                          f"{', '.join(sorted(PICKS_SORTABLE_FIELDS))}")
+    p_t.add_argument("--sort-dir", choices=["asc", "desc"], default="desc",
+                     help="排序方向（默认 desc）")
     p_t.set_defaults(func=cmd_concept_top10)
 
     p_l = sub2.add_parser("ladder", parents=[common], help="涨停天梯")

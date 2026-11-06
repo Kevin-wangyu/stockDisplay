@@ -482,7 +482,11 @@ def _build_forward_map(codes: list[str], trade_date: str,
 def _build_intersection_picks(top_amount, top_pct, top_limit_up,
                               trade_date, market_total, concept_scores,
                               topn=40):
-    """三榜并集 → 每只股票命中概念 → 按重要性排序取 topn。
+    """三榜并集 → 每只股票命中概念 → 按重要性排序。
+
+    topn:
+      - 正整数 N → 按 importance 降序取前 N（默认 40）
+      - None 或 0 → 返回全部命中三榜的股票（全量候选池）
 
     importance = mean(matched_concept_scores) × match_count^0.3
     """
@@ -552,10 +556,10 @@ def _build_intersection_picks(top_amount, top_pct, top_limit_up,
         })
 
     # ── 按重要性降序（同分按命中数降序） ──
-    picks.sort(key=lambda x: (-x["importance_index"],
-                              -x["match_count"],
-                              x["code"]))
-    picks = picks[:topn]
+    picks.sort(key=lambda x: (-x["importance_index"], -x["match_count"], x["code"]))
+    # ⭐ topn=None 或 topn<=0 → 返回全量（不截断）
+    if topn and topn > 0:
+        picks = picks[:topn]
     if not picks:
         return []
 

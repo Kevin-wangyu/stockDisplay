@@ -132,15 +132,38 @@ python cli.py trading neighbor 2024-10-09 --direction prev
 
 ### `concept top10` / `concept ladder` 的专用参数
 
-| 参数 | 作用 | 示例 |
+| 参数 | 说明 | 示例 |
 |---|---|---|
-| `--only` | 只返回 picks / lists / all（仅 top10） | `--only picks` |
-| `--limit` | 交集榜 / 天梯榜的条数上限 | `--limit 20` |
-| `--columns` | 交集榜 / 天梯榜的字段裁剪 | `--columns code,name,importance_index` |
+| `--only` | picks / lists / all | `--only picks` |
+| `--limit N` | 排序后取前 N；N=0 或不传 → 全量 | `--limit 30` |
+| `--sort-by` | 排序字段（默认 importance_index） | `--sort-by fwd_5d` |
+| `--sort-dir` | asc / desc（默认 desc） | `--sort-dir desc` |
+| `--columns` | 字段裁剪 | `--columns code,name,fwd_5d` |
+
+**可排序字段**（与 picks 的实际字段一致）：
+code, name, match_count, matched_concepts,
+importance_index, importance_pct, rank_in_picks, total_in_picks,
+close, pct_change, turnover_rate, hot_rank, amount,
+huge_order_net, big_order_net, medium_order_net, small_order_net,
+huge_order_net_norm, big_order_net_norm,
+medium_order_net_norm, small_order_net_norm,
+fwd_5d, fwd_10d, fwd_20d, fwd_30d,
+fwd_max_5d, fwd_max_10d, fwd_max_20d, fwd_max_30d
 
 **典型场景**：
 
 ```bash
+# 找未来 10 日最大涨幅最高的前 10 只
+python cli.py concept top10 2024-10-09 --only picks \
+  --sort-by fwd_max_10d --limit 10 \
+  --columns code,name,importance_index,fwd_10d,fwd_max_10d
+
+# 全量池 + 字段裁剪（数据量最小）
+python cli.py concept top10 2024-10-09 --only picks \
+  --sort-by fwd_5d --limit 0 \
+  --columns code,name,importance_index,fwd_5d,fwd_max_5d \
+  --output /tmp/all.json
+
 # 只要交集榜前 20，字段精简
 python cli.py concept top10 2024-10-09 \
   --only picks --limit 20 \
