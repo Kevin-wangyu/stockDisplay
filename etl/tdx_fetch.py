@@ -131,10 +131,17 @@ def run(date=None):
     logger.info("tdx_fetch.run → 目标日期: %s，类型数: %d", date, len(type_params))
     logger.info("=" * 60)
 
+    try:
+        from core.aspsession import get_aspsessionid_with_cache
+        sid = get_aspsessionid_with_cache()
+        _cookie = f"ASPSESSIONID={sid}" if sid else f"ASPSESSIONID={COOKIE}"
+    except Exception:
+        _cookie = f"ASPSESSIONID={COOKIE}"
+
     for kwargs in type_params:
         try:
             fetch_today_index(
-                cookie=f"ASPSESSIONID={COOKIE}",
+                cookie=_cookie,
                 date=date,
                 **kwargs,
             )

@@ -68,7 +68,32 @@ KINDS = {
     }
     for k, v in DATA_TYPES.items()
 }
+# ⭐ 历史抓取时排除的字段（当日统计字段，历史日期无意义）
+_HISTORY_EXCLUDE_FIELDS = ("涨停家数", "上涨家数", "下跌家数", "筹码分布", "内盘", "外盘", "热度")
 
+
+def _strip_history_fields(fields: str) -> str:
+    """从字段串里剔除"当日统计字段"（涨停家数/上涨家数/下跌家数）。
+
+    兼容中文逗号/英文逗号/顿号/空格分隔，兼容前后位置。
+    """
+    s = fields or ""
+    for f in _HISTORY_EXCLUDE_FIELDS:
+        # 依次去掉可能的分隔符 + 字段，或字段 + 分隔符
+        for sep in ("，", ",", "、", " "):
+            s = s.replace(sep + f, "")
+            s = s.replace(f + sep, "")
+        s = s.replace(f, "")
+
+    # 清理连续的重复分隔符
+    for _ in range(3):
+        s = s.replace("，，", "，")
+        s = s.replace(",,", ",")
+        s = s.replace("，,", "，")
+        s = s.replace(",，", ",")
+        s = s.replace("、、", "、")
+
+    return s.strip("，,、 ").strip()
 # ═══════════════════════════════════════════════════════════════
 # 主流程
 # ═══════════════════════════════════════════════════════════════
@@ -125,7 +150,9 @@ def fetch_range(
         t0 = time.time()
 
         try:
-            words = cfg["words_fmt"](date_cn, cfg["data_fields"])
+            # ⭐ 历史抓取：剔除当日统计字段
+            fields_for_query = _strip_history_fields(cfg["data_fields"])
+            words = cfg["words_fmt"](date_cn, fields_for_query)
             logger.info("  查询词：%s", words)
 
             nlpse_id = client.parse_query(words)
@@ -198,7 +225,21 @@ def main():
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
 
-    cookie = args.cookie or f"ASPSESSIONID={COOKIE}"
+    if args.cookie:
+        cookie = args.cookie
+    else:
+        # ⭐ 优先用缓存/TOUCH 自动获取，失败才回退到 config.COOKIE
+        try:
+            from core.aspsession import get_aspsessionid_with_cache
+            sid = get_aspsessionid_with_cache()
+            if sid:
+                cookie = f"ASPSESSIONID={sid}"
+            else:
+                print("[fetch_history] ⚠ 自动获取失败，回退 config.COOKIE")
+                cookie = f"ASPSESSIONID={COOKIE}"
+        except Exception as e:
+            print(f"[fetch_history] ⚠ 自动获取异常: {e}，回退 config.COOKIE")
+            cookie = f"ASPSESSIONID={COOKIE}"
     fetch_range(
         kind=args.kind,
         start_date=args.start,
