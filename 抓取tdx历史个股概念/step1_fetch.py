@@ -9,7 +9,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 from eltdx import F10Client
-
+from config import COMPACT_DIR
 from logger_setup import setup_logger
 def _safe_float(v, default=None):
     """转 float，NaN / None / 空串 返回 default。"""
@@ -24,7 +24,8 @@ def _safe_float(v, default=None):
         return default
 # ---------------- 配置 ----------------
 XLSX_PATH = "raw_data/A股概念/2026年11月02日A股概念数据.xlsx"
-OUT_PATH = "data/raw_topics.parquet"
+
+OUT_PATH = COMPACT_DIR / "raw_topics.parquet"
 PROGRESS_PATH = "data/fetch_progress.json"
 ERROR_PATH = "data/fetch_errors.txt"
 

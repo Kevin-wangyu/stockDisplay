@@ -13,7 +13,8 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-_CACHE_FILE = Path(__file__).parent / "data" / "trading_calendar.parquet"
+from config import TRADING_CALENDAR_FILE
+_CACHE_FILE = TRADING_CALENDAR_FILE
 
 
 def _fetch_and_cache() -> pd.Series:

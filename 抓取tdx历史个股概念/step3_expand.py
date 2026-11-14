@@ -7,7 +7,8 @@ import duckdb
 from logger_setup import setup_logger
 from datetime import date as _date
 from trading_calendar import trading_days as _trading_days
-RAW = "data/raw_topics.parquet"
+from config import COMPACT_DIR
+RAW = COMPACT_DIR / "raw_topics.parquet"
 OUT_DIR = "data/concept_date"
 START_DATE = "2024-02-01"
 COMPRESSION = "zstd"
@@ -187,7 +188,7 @@ def main():
     #
     # 同一 (code, topic_name) 只保留最早入选日那条，避免重复
     # ══════════════════════════════════════════════════════════
-    META_PATH = "data/concept_meta.parquet"
+    META_PATH = COMPACT_DIR / "concept_meta.parquet"
     log.info(f"[main] 生成 {META_PATH}（code, topic_name, gld, ztnr, selected_date）...")
 
     con.execute(f"""

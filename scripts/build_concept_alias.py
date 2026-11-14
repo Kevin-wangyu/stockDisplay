@@ -24,11 +24,10 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 import pandas as pd
 
-from config import MAP_FILE, DATA_DIR, CONCEPT_DIR
+from config import MAP_FILE, DATA_DIR, CONCEPT_DIR, CONCEPT_ALIAS_FILE
 from core.db import _q_df, CONCEPT_GLOB, COMPACT_ROOT
 from core.loaders import _list_partition_dates
 
-CONCEPT_ALIAS_FILE = DATA_DIR / "concept_alias.parquet"
 CONCEPT_DATE_DIR   = DATA_DIR / "concept_date"
 
 # ─── 人工覆盖词典（cf_name → map_name）───

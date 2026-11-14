@@ -22,9 +22,18 @@ AMO_DIR = DATA_DIR / "amo_components"
 DAILY_PCT_DIR = DATA_DIR / "daily_pct"
 CONCEPT_PICKS_DIR = DATA_DIR / "concept_picks"
 LIMIT_UP_STREAK_DIR = DATA_DIR / "limit_up_streak"
-MAP_FILE = DATA_DIR / "stock_sector_map.parquet" # 行业概念映射文件
 INDEX_FILE = DATA_DIR / "index_amount.parquet" # 指数资金流文件
+# ⭐ 合并文件根目录（月合并数据 + 基础元数据/汇总数据）
+COMPACT_DIR = DATA_DIR.parent / "data_compact"
+COMPACT_DIR.mkdir(parents=True, exist_ok=True)
 
+# 基础数据（从 data/ 搬到 data_compact/）
+MAP_FILE = COMPACT_DIR / "stock_sector_map.parquet"
+CONCEPT_ALIAS_FILE = COMPACT_DIR / "concept_alias.parquet"
+CONCEPT_META_FILE = COMPACT_DIR / "concept_meta.parquet"
+MARKET_AMOUNT_FILE = COMPACT_DIR / "market_amount.parquet"
+TRADING_CALENDAR_FILE = COMPACT_DIR / "trading_calendar.parquet"
+RAW_TOPICS_FILE = COMPACT_DIR / "raw_topics.parquet"
 # 个股→板块映射原始 xlsx（快照型，非每日数据）
 MAP_RAW_DIR = BASE_DIR / "map"
 MAP_RAW_FILE = MAP_RAW_DIR / "个股所属行业概念（2026年9月18日前用）.xlsx"

@@ -10,7 +10,7 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 
-from config import DATA_DIR, QUOTE_DIR, INDUSTRY_DIR, CONCEPT_DIR
+from config import DATA_DIR, QUOTE_DIR, INDUSTRY_DIR, CONCEPT_DIR,MARKET_AMOUNT_FILE, CONCEPT_ALIAS_FILE
 
 
 # ── 单进程复用连接 ──
@@ -41,9 +41,7 @@ BASE_DIR      = QUOTE_DIR.parent.parent        # 项目根目录
 COMPACT_ROOT  = BASE_DIR / "data_compact"
 
 DAILY_PCT_DIR       = DATA_DIR / "daily_pct"
-MARKET_AMOUNT_FILE  = DATA_DIR / "market_amount.parquet"
-DAILY_PCT_FILE      = DATA_DIR / "daily_pct.parquet"       # 旧单文件（兼容）
-CONCEPT_ALIAS_FILE  = DATA_DIR / "concept_alias.parquet"
+DAILY_PCT_FILE      = DATA_DIR / "daily_pct.parquet"       
 
 
 # ── Glob 生成 ──

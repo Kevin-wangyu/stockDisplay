@@ -31,6 +31,7 @@ KINDS = {
     "concept_date":  CONCEPT_DATE_DIR,
     "daily_pct":     DAILY_PCT_DIR,
     "concept_picks": CONCEPT_PICKS_DIR,
+    "limit_up_streak": DATA_DIR / "limit_up_streak",
     "amo_components": AMO_DIR,
 }
 

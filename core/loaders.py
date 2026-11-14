@@ -185,7 +185,8 @@ def _load_concept_meta_table() -> dict:
     - 进程内永久缓存（lru_cache=1）
     - 文件不存在时返回空 dict
     """
-    meta_path = DATA_DIR / "concept_meta.parquet"
+    from config import CONCEPT_META_FILE
+    meta_path = CONCEPT_META_FILE
     if not meta_path.exists():
         logger.warning(
             "[concept_meta] %s 不存在，gld 将全部默认 1.0。"
