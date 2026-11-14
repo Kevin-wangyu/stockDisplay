@@ -34,6 +34,7 @@ KINDS = {
     "daily_pct":      DATA_DIR / "daily_pct",
     "concept_picks":  DATA_DIR / "concept_picks",
     "amo_components": DATA_DIR / "amo_components",
+    "limit_up_streak": DATA_DIR / "limit_up_streak",
 }
 
 
