@@ -10,11 +10,10 @@ logger = logging.getLogger(__name__)
 
 
 def maybe_rebuild_month_archive() -> None:
-    """每次启动检查：若 data 里有比 compact 更新的当月文件，重建当月 compact。
-
-    1 日启动会触发；1 日没启动，2 日首次启动也会触发。
-    """
-    from scripts.archive_month import archive_kind, KINDS
+    """每次启动检查：如果 data/ 本月的日数据没有完全包含在 compact 中，则只重建本月。"""
+    from datetime import date
+    from scripts.archive_month import rebuild_month, KINDS
+    from core.loaders import _list_partition_dates
     import duckdb as _dd
 
     compact_root = DATA_DIR.parent / "data_compact"
@@ -26,22 +25,40 @@ def maybe_rebuild_month_archive() -> None:
         for kind, kdir in KINDS.items():
             if not kdir.exists():
                 continue
+
+            # 1. 获取 data/ 下本月存在的所有日期
+            all_days = _list_partition_dates(kdir)
+            month_days = [d for d in all_days if d.startswith(cur_month + "-")]
+            
+            # 如果 data/ 里本月都没有数据，无需重建
+            if not month_days:
+                continue
+
+            # 2. 获取 compact 里已有的日期
             compact_file = compact_root / kind / f"{cur_month}.parquet"
+            compact_days = set()
+            if compact_file.exists():
+                try:
+                    f_str = str(compact_file).replace("\\", "/")
+                    rows = con.execute(
+                        f"SELECT DISTINCT CAST(trade_date AS VARCHAR) FROM read_parquet('{f_str}')"
+                    ).fetchall()
+                    compact_days = {str(r[0])[:10] for r in rows if r[0]}
+                except Exception:
+                    pass  # 读失败视为空，会触发重建
 
+            # 3. 检查 data/ 里的数据是否已全部合并进 compact
             need_rebuild = False
-            if not compact_file.exists():
-                need_rebuild = True
-            else:
-                compact_mtime = compact_file.stat().st_mtime
-                for p in kdir.iterdir():
-                    if p.is_dir() and p.name.startswith(f"trade_date={cur_month}"):
-                        part = p / "part.parquet"
-                        if part.exists() and part.stat().st_mtime > compact_mtime:
-                            need_rebuild = True
-                            break
+            for d in month_days:
+                if d not in compact_days:
+                    need_rebuild = True
+                    break
 
+            # 4. 只重建本月
             if need_rebuild:
-                print(f"[serve] 重建 {kind} 当月 compact…")
-                archive_kind(kind, kdir, con, rebuild_current=True, dry_run=False)
+                print(f"[serve] {kind} 本月 compact 未包含最新数据，重建 {cur_month}…")
+                # 直接调用 rebuild_month 只处理当月，不包含上月
+                rebuild_month(kind, kdir, cur_month, con, dry_run=False)
+                
     except Exception:
         logger.exception("[serve] 月合并更新失败，继续启动")
