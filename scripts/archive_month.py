@@ -47,6 +47,28 @@ def _list_days(kind_dir: Path) -> list[str]:
                 out.append(d)
     return sorted(out)
 
+def _get_months_in_range(start_str: str, end_str: str) -> list[str]:
+    """将 YYYY-MM-DD 或 YYYY-MM 的区间转换为月份列表（YYYY-MM）。
+    
+    如果 start 和 end 跨年也能正确处理。
+    """
+    from datetime import datetime
+    try:
+        start = datetime.strptime(start_str[:7], "%Y-%m")
+        end = datetime.strptime(end_str[:7], "%Y-%m")
+    except ValueError:
+        raise ValueError("日期格式必须为 YYYY-MM-DD 或 YYYY-MM")
+    
+    months = []
+    curr = start
+    while curr <= end:
+        months.append(curr.strftime("%Y-%m"))
+        # 顺延到下一个月
+        if curr.month == 12:
+            curr = curr.replace(year=curr.year + 1, month=1)
+        else:
+            curr = curr.replace(month=curr.month + 1)
+    return months
 
 def _next_month(month: str) -> str:
     y, m = int(month[:4]), int(month[5:7])
@@ -120,6 +142,7 @@ def archive_kind(kind: str, kind_dir: Path, con, rebuild_current=False, dry_run=
     return n
 
 
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--kind", default="all",
@@ -127,9 +150,25 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--rebuild-current", action="store_true",
                     help="只重跑当月+上月（供 serve.py 增量用）")
+    ap.add_argument("--start", default=None,
+                    help="归档起始日期/月份（YYYY-MM-DD 或 YYYY-MM）")
+    ap.add_argument("--end", default=None,
+                    help="归档结束日期/月份（YYYY-MM-DD 或 YYYY-MM）")
     args = ap.parse_args()
 
     kinds = list(KINDS.keys()) if args.kind == "all" else [args.kind]
+    # ⭐ 解析区间参数
+    custom_months = None
+    if args.start or args.end:
+        if not (args.start and args.end):
+            print("错误：--start 和 --end 必须同时提供")
+            sys.exit(1)
+        try:
+            custom_months = _get_months_in_range(args.start, args.end)
+            print(f"自定义归档区间: {custom_months[0]} ~ {custom_months[-1]} (共 {len(custom_months)} 个月)")
+        except ValueError as e:
+            print(f"错误：{e}")
+            sys.exit(1)
 
     con = duckdb.connect()
     t0 = time.time()
@@ -139,6 +178,18 @@ def main():
         if not kind_dir.exists():
             print(f"[{kind}] 目录不存在: {kind_dir}")
             continue
+
+        # ⭐ 优先处理自定义区间
+        if custom_months:
+            n = 0
+            for m in custom_months:
+                if rebuild_month(kind, kind_dir, m, con, dry_run=args.dry_run):
+                    n += 1
+            total += n
+            print(f"[{kind}] 区间归档完成，共处理 {n} 个月")
+            continue
+
+        # 原有逻辑：当月或全量
         total += archive_kind(kind, kind_dir, con,
                               rebuild_current=args.rebuild_current,
                               dry_run=args.dry_run)
