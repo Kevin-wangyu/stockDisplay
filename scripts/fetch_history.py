@@ -31,7 +31,6 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from config import (
-    COOKIE,
     RAW_QUOTE_DIR, RAW_CONCEPT_DIR, RAW_INDUSTRY_DIR,
     QUOTE_DIR, CONCEPT_DIR, INDUSTRY_DIR,
 )
@@ -225,21 +224,13 @@ def main():
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
 
-    if args.cookie:
-        cookie = args.cookie
-    else:
-        # ⭐ 优先用缓存/TOUCH 自动获取，失败才回退到 config.COOKIE
-        try:
-            from core.aspsession import get_aspsessionid_with_cache
-            sid = get_aspsessionid_with_cache()
-            if sid:
-                cookie = f"ASPSESSIONID={sid}"
-            else:
-                print("[fetch_history] ⚠ 自动获取失败，回退 config.COOKIE")
-                cookie = f"ASPSESSIONID={COOKIE}"
-        except Exception as e:
-            print(f"[fetch_history] ⚠ 自动获取异常: {e}，回退 config.COOKIE")
-            cookie = f"ASPSESSIONID={COOKIE}"
+    cookie = args.cookie or ""
+
+    from core.aspsession import get_aspsessionid_with_cache
+    sid = get_aspsessionid_with_cache()
+    if sid:
+        cookie = f"ASPSESSIONID={sid}"
+
     fetch_range(
         kind=args.kind,
         start_date=args.start,

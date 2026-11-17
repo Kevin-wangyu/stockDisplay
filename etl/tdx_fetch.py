@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from config import (
-    COOKIE, QUOTE_DIR, INDUSTRY_DIR, CONCEPT_DIR,
+    QUOTE_DIR, INDUSTRY_DIR, CONCEPT_DIR,
     RAW_QUOTE_DIR, RAW_CONCEPT_DIR, RAW_INDUSTRY_DIR, RAW_DIR,
     RAW_STOCK_CONCEPT_DIR, CONCEPT_DATE_DIR, RAW_AMO_DIR, AMO_DIR,
 )
@@ -131,17 +131,14 @@ def run(date=None):
     logger.info("tdx_fetch.run → 目标日期: %s，类型数: %d", date, len(type_params))
     logger.info("=" * 60)
 
-    try:
-        from core.aspsession import get_aspsessionid_with_cache
-        sid = get_aspsessionid_with_cache()
-        _cookie = f"ASPSESSIONID={sid}" if sid else f"ASPSESSIONID={COOKIE}"
-    except Exception:
-        _cookie = f"ASPSESSIONID={COOKIE}"
+    from core.aspsession import get_aspsessionid_with_cache
+    sid = get_aspsessionid_with_cache()
+    _cookie = f"ASPSESSIONID={sid}"
 
     for kwargs in type_params:
         try:
             fetch_today_index(
-                cookie=_cookie,
+                cookie="",
                 date=date,
                 **kwargs,
             )

@@ -170,3 +170,16 @@ def get_aspsessionid_with_cache(force_refresh: bool = False) -> str | None:
         return cached["value"]
 
     return None
+
+def save_aspsessionid_manual(value: str) -> None:
+    """当自动获取失败、用户手动输入时，直接写入本地缓存。"""
+    val = str(value).strip()
+    if not val:
+        raise ValueError("ASPSessionID 不能为空")
+    
+    # 剔除可能带上的前缀
+    if val.upper().startswith("ASPSESSIONID="):
+        val = val.split("=", 1)[1].strip("; ")
+        
+    _write_cache(val)
+    logger.info("[aspsession] 手动输入的 ASPSessionID 已写入缓存")
