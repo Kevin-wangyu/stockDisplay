@@ -20,12 +20,12 @@ import time
 import pandas as pd
 from functools import lru_cache
 
-from config import DATA_DIR
+from config import COMPACT_DIR
 
 logger = logging.getLogger(__name__)
 
 TOPS_CACHE_VERSION = "v1"
-TOPS_CACHE_DIR = DATA_DIR / "_tops_cache" / TOPS_CACHE_VERSION
+TOPS_CACHE_DIR = COMPACT_DIR / "_tops_cache" / TOPS_CACHE_VERSION
 BARS_PATH = TOPS_CACHE_DIR / "bars.parquet"
 META_PATH = TOPS_CACHE_DIR / "meta.parquet"
 
