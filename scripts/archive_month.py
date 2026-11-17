@@ -114,6 +114,10 @@ def rebuild_month(kind: str, kind_dir: Path, month: str, con, dry_run=False) -> 
             ) TO '{out_path}' (FORMAT PARQUET)
         """)
         logger.info(f"[{kind}] {month} 完成 → {out_file.name}")
+        if not dry_run:
+            logger.info("\n正在同步到 data_compact_sync...")
+            import subprocess
+            subprocess.run([sys.executable, "scripts/prepare_compact_sync.py"])
         return True
     except Exception as e:
         print(f"[{kind}] {month} 失败: {e}")
@@ -196,6 +200,10 @@ def main():
 
     print(f"\n完成：{total} 个月，耗时 {time.time() - t0:.1f}s")
     print(f"输出目录：{COMPACT_ROOT}")
+    if not args.dry_run:
+        print("\n正在同步到 data_compact_sync...")
+        import subprocess
+        subprocess.run([sys.executable, "scripts/prepare_compact_sync.py"])
 
 
 if __name__ == "__main__":
