@@ -223,7 +223,7 @@ def process_kind(con, kind: str, start, end, overwrite, dry_run,
                 continue
 
             # 存在 → 默认跳过；--check-consistency 才检查
-            if not check_consistency:
+            if not check_consistency and not overwrite:
                 stats["days_skip"] += 1
                 continue
 
@@ -242,6 +242,8 @@ def process_kind(con, kind: str, start, end, overwrite, dry_run,
                 if status == "ok":
                     stats["days_ok"] += 1
                     stats["rows_written"] += n
+                    # 既然已经成功覆盖，就不再计入 mismatch_details
+                    stats["mismatch_details"].pop()
 
         # ⭐ 只在有动作时打进度
         cur = (stats["days_ok"], stats["days_mismatch"],
