@@ -237,7 +237,7 @@ def rebuild_tops_cache(trade_dates: list[str], force: bool = False) -> int:
         return 0
 
     total = len(trade_dates)
-    print(f"[tops_cache] 待生成 {total} 天", flush=True)
+    logger.info(f"[tops_cache] 待生成 {total} 天", flush=True)
 
     all_bars = []
     all_meta = []
@@ -272,7 +272,7 @@ def rebuild_tops_cache(trade_dates: list[str], force: bool = False) -> int:
         return 0
 
     # 批量写（一次 IO）
-    print(f"[tops_cache] 写入 parquet（{len(all_bars)} 行）…", flush=True)
+    logger.info(f"[tops_cache] 写入 parquet（{len(all_bars)} 行）…", flush=True)
     t_write = time.time()
 
     TOPS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -297,8 +297,8 @@ def rebuild_tops_cache(trade_dates: list[str], force: bool = False) -> int:
     merged.to_parquet(META_PATH, index=False)
 
     _load_tops_cache.cache_clear()
-    print(f"[tops_cache] 写盘完成 {time.time() - t_write:.1f}s", flush=True)
-    print(f"[tops_cache] 完成：{ok} 天（失败 {fail}），总耗时 {time.time() - t_start:.0f}s", flush=True)
+    logger.info(f"[tops_cache] 写盘完成 {time.time() - t_write:.1f}s", flush=True)
+    logger.info(f"[tops_cache] 完成：{ok} 天（失败 {fail}），总耗时 {time.time() - t_start:.0f}s", flush=True)
     return ok
 
 

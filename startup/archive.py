@@ -56,7 +56,7 @@ def maybe_rebuild_month_archive() -> None:
 
             # 4. 只重建本月
             if need_rebuild:
-                print(f"[serve] {kind} 本月 compact 未包含最新数据，重建 {cur_month}…")
+                logger.info(f"[serve] {kind} 本月 compact 未包含最新数据，重建 {cur_month}…")
                 # 直接调用 rebuild_month 只处理当月，不包含上月
                 rebuild_month(kind, kdir, cur_month, con, dry_run=False)
                 

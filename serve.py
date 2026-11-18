@@ -139,9 +139,8 @@ def main() -> None:
             bars_map, _, _ = _load_tops_cache()
             missing = [d for d in all_td if d not in bars_map]
             if missing:
-                print(f"[serve] 补 _tops_cache {len(missing)} 天")
-                n_tops = rebuild_tops_cache(missing)
-                print(f"[serve] _tops_cache 补 {n_tops} 天")
+                logger.info(f"[serve] 补 _tops_cache {len(missing)} 天")
+                rebuild_tops_cache(missing)
         except Exception:
             logging.getLogger(__name__).exception("[serve] _tops_cache 增量失败")
             
