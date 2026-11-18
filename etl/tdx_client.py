@@ -390,7 +390,7 @@ class TDXXiaoda:
             timeout=(10, 20), 
         )
         if body[:4] != b"PK\x03\x04":
-            logger.error("exportExcel 未返回 xlsx，响应体长度=%d", len(body))
+            logger.error("❌️exportExcel 未返回 xlsx，响应体长度=%d", len(body))
             try:
                 logger.error("响应内容：%s", body.decode("utf-8")[:2000])
             except UnicodeDecodeError:
@@ -400,5 +400,5 @@ class TDXXiaoda:
         save = Path(save_path)
         save.parent.mkdir(parents=True, exist_ok=True)
         save.write_bytes(body)
-        logger.info("导出成功：%d 字节 → %s", len(body), save)
+        logger.info("✅️导出成功：%d 字节 → %s", len(body), save)
         return True

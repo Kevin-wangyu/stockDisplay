@@ -228,8 +228,7 @@ def check_recent_missing(n_days: int = 5, auto_backfill: bool = False) -> dict:
     else:
         logger.warning("[missing-check] 未开启自动补全（加 --auto-backfill-missing 启用）")
         logger.warning("[missing-check] 手动补全：")
-        logger.warning("  python scripts\\audit_quote_with_eltdx.py --yes")
-        logger.warning("  或: python scripts\\backfill_single_stock_day.py <code> <date>")
+        logger.warning("  python scripts\\backfill_single_stock_day.py <code> <date>")
 
     result["elapsed_s"] = round(time.time() - t0, 1)
     return result
