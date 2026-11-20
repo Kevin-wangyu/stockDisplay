@@ -21,6 +21,7 @@ CONCEPT_DIR = DATA_DIR / "concept_flow"
 AMO_DIR = DATA_DIR / "amo_components"
 DAILY_PCT_DIR = DATA_DIR / "daily_pct"
 CONCEPT_PICKS_DIR = DATA_DIR / "concept_picks"
+C7_POOL_DIR = DATA_DIR / "c7_picks"  # C6/C7 合并策略池（派生缓存，日分区）
 LIMIT_UP_STREAK_DIR = DATA_DIR / "limit_up_streak"
 INDEX_FILE = DATA_DIR / "index_amount.parquet" # 指数资金流文件
 # ⭐ 合并文件根目录（月合并数据 + 基础元数据/汇总数据）

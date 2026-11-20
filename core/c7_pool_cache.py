@@ -14,11 +14,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from config import DATA_DIR
+from config import C7_POOL_DIR
 
 logger = logging.getLogger(__name__)
-
-C7_POOL_DIR = DATA_DIR / "c7_picks"
 
 
 def load_c7_pool(trade_date: str) -> list[dict] | None:

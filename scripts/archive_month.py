@@ -18,7 +18,8 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 import duckdb
 from config import (
-    DATA_DIR, QUOTE_DIR, INDUSTRY_DIR, CONCEPT_DIR, CONCEPT_DATE_DIR, DAILY_PCT_DIR,CONCEPT_PICKS_DIR,AMO_DIR
+    DATA_DIR, QUOTE_DIR, INDUSTRY_DIR, CONCEPT_DIR, CONCEPT_DATE_DIR, DAILY_PCT_DIR,
+    CONCEPT_PICKS_DIR, AMO_DIR, C7_POOL_DIR, LIMIT_UP_STREAK_DIR
 )
 import logging
 logger = logging.getLogger(__name__)
@@ -31,7 +32,8 @@ KINDS = {
     "concept_date":  CONCEPT_DATE_DIR,
     "daily_pct":     DAILY_PCT_DIR,
     "concept_picks": CONCEPT_PICKS_DIR,
-    "limit_up_streak": DATA_DIR / "limit_up_streak",
+    "c7_picks":       C7_POOL_DIR,
+    "limit_up_streak": LIMIT_UP_STREAK_DIR,
     "amo_components": AMO_DIR,
 }
 

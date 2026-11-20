@@ -32,7 +32,7 @@ import pandas as pd
 from config import (
     QUOTE_DIR, INDUSTRY_DIR, CONCEPT_DIR, CONCEPT_DATE_DIR,
     DAILY_PCT_DIR, LIMIT_UP_STREAK_DIR, CONCEPT_PICKS_DIR,
-    AMO_DIR,
+    AMO_DIR, C7_POOL_DIR,
 )
 from trading_calendar import _load_calendar
 
@@ -77,6 +77,7 @@ def check_coverage():
         ("daily_pct", DAILY_PCT_DIR),
         ("limit_up_streak", LIMIT_UP_STREAK_DIR),
         ("concept_picks", CONCEPT_PICKS_DIR),
+        ("c7_picks", C7_POOL_DIR),
         ("amo_components", AMO_DIR),
     ]
     for name, d in tables:

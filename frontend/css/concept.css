@@ -1377,3 +1377,76 @@
 /* 详情页来源徽标配色 */
 .c7-detail-badge.src-c6 { background: #1f9e8f !important; }
 .c7-detail-badge.src-c7 { background: #2d6cdf !important; }
+
+/* ═══════════════════════════════════════════════════════════
+   龙头概念「龙头」按钮框 + hover 浮层（追加覆盖，不改上方原样式）
+   只作用于 concept.html；index.html 不加载本文件，绝无副作用
+   ═══════════════════════════════════════════════════════════ */
+.leader-box {
+  position: relative;          /* 浮层定位锚点 */
+  display: inline-flex;
+  align-items: center;
+}
+.leader-btn {
+  background: linear-gradient(180deg, #b8862b, #9c6f1f) !important;
+  border-color: #b8862b !important;
+  color: #fff !important;
+  font-weight: 600;
+  letter-spacing: 1px;
+  padding: 5px 12px !important;
+  border-radius: 4px;
+  cursor: default;
+  white-space: nowrap;
+}
+.leader-count {
+  margin-left: 5px;
+  background: rgba(255,255,255,.22);
+  border-radius: 9px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.leader-count:empty { display: none; }
+.leader-pop {
+  display: none;               /* 默认隐藏，hover 显示 */
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 400;                /* 高于 #toolbar 的 200，浮层不被遮挡 */
+  min-width: 260px;
+  max-width: 340px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--panel, #1e1e1e);
+  border: 1px solid var(--border, #444);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.45);
+  padding: 8px 10px;
+  color: var(--text, #ddd);
+  font-size: 12px;
+}
+.leader-box:hover .leader-pop { display: block; }
+.leader-pop-title {
+  color: var(--text-dim, #999);
+  font-size: 11px;
+  padding: 2px 4px 7px;
+  border-bottom: 1px solid var(--border, #444);
+  margin-bottom: 5px;
+}
+.leader-pop-empty {
+  color: var(--text-dim, #999);
+  padding: 6px 4px;
+}
+.leader-pop-item {
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px;
+  border-radius: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.leader-pop-item:nth-child(odd) { background: rgba(255,255,255,.03); }
+.leader-pop-rank { color: var(--text-dim, #999); text-align: right; font-size: 10px; }
+.leader-pop-name { color: var(--text, #ddd); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.leader-pop-score { color: #d9a94a; font-weight: 600; }

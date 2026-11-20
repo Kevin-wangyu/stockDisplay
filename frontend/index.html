@@ -32,6 +32,11 @@
       <label class="radio-toggle"><input type="radio" name="datasource" value="concept">概念</label>
       <button id="load">查询</button>
       <button id="fit" title="缩放至显示全部数据">适屏</button>
+
+      <span id="c7DetailBadge" class="c7-detail-badge" style="display:none"></span>
+      <span id="status"></span>
+    </div>
+    <div class="toolbar-row">
       <span id="drawTools">
         <button class="draw-btn active" data-tool="none" title="选择">光标</button>
         <button class="draw-btn" data-tool="hline" title="水平线">横线</button>
@@ -41,21 +46,7 @@
         <button class="draw-btn" data-tool="erase" title="点击线条删除">删除</button>
         <button class="draw-btn" id="clearDrawings" title="清除全部线条">清空</button>
       </span>
-      <span id="c7DetailBadge" class="c7-detail-badge" style="display:none"></span>
-      <span id="status"></span>
-    </div>
-
-    <div class="toolbar-row" id="overlayRow">
-      <label>均线</label>
-      <label class="ma-toggle" style="--c:#f5f5f5"><input type="checkbox" data-line="ma5" checked>MA5</label>
-      <label class="ma-toggle" style="--c:#f0b90b"><input type="checkbox" data-line="ma10" checked>MA10</label>
-      <label class="ma-toggle" style="--c:#a855f7"><input type="checkbox" data-line="ma20" checked>MA20</label>
-      <label class="ma-toggle" style="--c:#06b6d4"><input type="checkbox" data-line="ma30">MA30</label>
-      <label class="ma-toggle" style="--c:#f97316"><input type="checkbox" data-line="ma60">MA60</label>
-      <label class="ma-toggle" style="--c:#e91e63"><input type="checkbox" data-line="ma120">MA120</label>
-      <label class="ma-toggle" style="--c:#9ca3af"><input type="checkbox" data-line="ma250">MA250</label>
-      <label class="ma-toggle" style="--c:#6c5ce7"><input type="checkbox" data-line="boll">BOLL</label>
-
+      
       <label style="margin-left:12px">指标1</label>
       <div class="cascade-dd" id="dd-ind1">
         <button class="dd-trigger" type="button">
@@ -86,7 +77,17 @@
       <input id="normThreshold" type="number" step="0.05" min="0"
              value="1.00" style="width:80px">
     </div>
+
     <div class="toolbar-row" id="overlayRow">
+      <label>均线</label>
+      <label class="ma-toggle" style="--c:#f5f5f5"><input type="checkbox" data-line="ma5" checked>MA5</label>
+      <label class="ma-toggle" style="--c:#f0b90b"><input type="checkbox" data-line="ma10">MA10</label>
+      <label class="ma-toggle" style="--c:#a855f7"><input type="checkbox" data-line="ma20" checked>MA20</label>
+      <label class="ma-toggle" style="--c:#06b6d4"><input type="checkbox" data-line="ma30">MA30</label>
+      <label class="ma-toggle" style="--c:#f97316"><input type="checkbox" data-line="ma60" checked>MA60</label>
+      <label class="ma-toggle" style="--c:#e91e63"><input type="checkbox" data-line="ma120">MA120</label>
+      <label class="ma-toggle" style="--c:#9ca3af"><input type="checkbox" data-line="ma250">MA250</label>
+      <label class="ma-toggle" style="--c:#6c5ce7"><input type="checkbox" data-line="boll">BOLL</label>
       <span class="seg-control" id="amoSegCtrl" style="margin-left:12px" title="买卖结构">
         <button class="seg-btn active" data-amo="off">AMO 关</button>
         <button class="seg-btn" data-amo="ratio">占比</button>

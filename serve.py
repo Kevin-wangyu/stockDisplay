@@ -22,7 +22,7 @@ from pathlib import Path
 warnings.filterwarnings("ignore")
 sys.path.append(str(Path(__file__).parent))
 
-from config import setup_logging, CONCEPT_DIR, CONCEPT_PICKS_DIR
+from config import setup_logging, CONCEPT_DIR, CONCEPT_PICKS_DIR, C7_POOL_DIR
 
 logger = logging.getLogger("serve")
 
@@ -129,6 +129,23 @@ def main() -> None:
             force_recent_days=max(3, force_days),
         )
         logger.info(f"[serve] limit_up_streak 写入 {n_st} 天")
+
+        # ⭐ C6/C7 策略池增量更新（对照 limit_up_streak 的增量范式）：
+        #    只补"未缓存的缺失日 + fwd 待补全的近期日"，不再无脑重算最近 N 天
+        #    （原 force_recent_days=10 导致每次启动对近10天×135日 buffer 全量重算，
+        #     实测 129s，且近10天未来数据未到 fwd 本就为 null，纯浪费）。
+        #    fwd 补全交给 rebuild_c7_pool 内部 _fwd_incomplete_dates 智能判断。
+        #    只写 data/c7_picks 派生缓存分区，日分区零删除、不触碰原始行情/概念数据。
+        try:
+            from core.c7_pool_rebuild import rebuild_c7_pool
+            pool_stat = rebuild_c7_pool(
+                limit_days=max(30, force_days),
+                force_recent_days=0,
+            )
+            logger.info(f"[serve] c7_pool 更新 {pool_stat.get('days', 0)} 天 "
+                        f"{pool_stat.get('rows', 0)} 行 来源={pool_stat.get('source_counts', {})}")
+        except Exception:
+            logger.exception("[serve] c7_pool 增量更新失败（不影响启动，可手动重跑）")
 
         # compact 重建必须在查询之前
         maybe_rebuild_month_archive()

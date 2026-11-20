@@ -81,7 +81,52 @@ const v1El = {
   limitUpList:  document.getElementById("v1LimitUpList"),
   ladderList:   document.getElementById("v1LadderList"),
   picksList:    document.getElementById("v1PicksList"),
+  leaderPop:    document.getElementById("leaderPop"),
+  leaderCount:  document.getElementById("leaderCount"),
 };
+
+/** 用 DOM 安全渲染龙头浮层：每项「概念名 + score」，按 score 降序。 */
+function v1RenderLeaderPop(leaders) {
+  const pop = v1El.leaderPop;
+  const cnt = v1El.leaderCount;
+  if (!pop || !cnt) return;
+  pop.replaceChildren();
+  if (!Array.isArray(leaders) || leaders.length === 0) {
+    cnt.textContent = "";
+    const empty = document.createElement("div");
+    empty.className = "leader-pop-empty";
+    empty.textContent = "当日无龙头概念";
+    pop.appendChild(empty);
+    return;
+  }
+  cnt.textContent = leaders.length;
+  // 后端已按 score 降序，这里再排一次确保口径稳妥（不改后端）
+  const sorted = leaders.slice().sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
+  const title = document.createElement("div");
+  title.className = "leader-pop-title";
+  title.textContent = `当日龙头概念（score ≥ 0.8）· 共 ${sorted.length} 个`;
+  pop.appendChild(title);
+  const list = document.createElement("div");
+  list.className = "leader-pop-list";
+  sorted.forEach((l, i) => {
+    const row = document.createElement("div");
+    row.className = "leader-pop-item";
+    const rank = document.createElement("span");
+    rank.className = "leader-pop-rank";
+    rank.textContent = String(i + 1);
+    const name = document.createElement("span");
+    name.className = "leader-pop-name";
+    name.textContent = l.name;
+    const score = document.createElement("span");
+    score.className = "leader-pop-score";
+    score.textContent = Number(l.score).toFixed(4);
+    row.appendChild(rank);
+    row.appendChild(name);
+    row.appendChild(score);
+    list.appendChild(row);
+  });
+  pop.appendChild(list);
+}
 const v1FmtYi  = (v) => (v / 1e8).toFixed(2) + " 亿";
 const v1FmtZY  = (v) => (v / 1e12).toFixed(2) + " 兆";
 const v1FmtPct = (v) => {
@@ -609,22 +654,15 @@ async function loadView1() {
     const nC7 = v1LastPicks.filter(p => p.source === 'C7').length;
     const nC6 = v1LastPicks.filter(p => p.source === 'C6').length;
     const streakCount = v1LastPicks.filter(p => p.is_streak2).length;
-    const cacheTag = v1C7Meta
-      ? (v1C7Meta.cache === 'local_parquet' ? '本地预计算'
-         : v1C7Meta.cache === 'stable_lru' ? '缓存' : '实时')
-      : '';
     const leaders = Array.isArray(data.leader_concepts) ? data.leader_concepts : [];
-    const leaderText = leaders.length
-      ? '龙头：' + leaders.slice(0, 3).map(l => l.name).join('、')
-        + (leaders.length > 3 ? ` 等${leaders.length}个` : '')
-      : '龙头：无';
-    setStatus(`${leaderText} · 天梯 ${ladderCount} 只 · 策略池 ${picksCount} 只`
-      + ` (C7 ${nC7} / C6补充 ${nC6})`
-      + (streakCount ? ` · 连池≥2日 ${streakCount} 只 ★` : '')
-      + (cacheTag ? ` · ${cacheTag}` : ''));
+    // ⭐ 龙头概念改为独立「龙头」按钮框 + hover 浮层，不再塞进 #status
+    v1RenderLeaderPop(leaders);
+    setStatus(`天梯 ${ladderCount} 只 · 策略池 ${picksCount} 只`
+      + ` (C7：${nC7} / C6：${nC6})`);
   } catch (e) {
     console.error(e);
     setStatus("错误：" + e.message, true);
+    v1RenderLeaderPop([]);
     v1El.marketTotal.textContent = "-";
     if (v1El.amountList)  v1El.amountList.innerHTML = "";
     if (v1El.pctList)     v1El.pctList.innerHTML = "";
