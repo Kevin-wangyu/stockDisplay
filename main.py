@@ -97,6 +97,21 @@ def api_concept_date_top10(trade_date: str = Query(..., description="YYYY-MM-DD"
     except Exception as e:
         logger.exception("概念榜单查询失败 %s", trade_date)
         raise HTTPException(status_code=500, detail=str(e))
+@app.get("/api/concept/c7_picks")
+def api_concept_c7_picks(trade_date: str = Query(..., description="YYYY-MM-DD")):
+    """C7 策略选股（concept.html 交集选股列表的数据源）。
+
+    全部当日可知、无未来信息；综合分排序(规则1.1)、连续在池标注(规则5.1)。
+    """
+    try:
+        from queries import c7_picks
+        return c7_picks.get_c7_picks(trade_date)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("C7 选股查询失败 %s", trade_date)
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/concept/colors")
 def api_concept_colors(trade_date: str = Query(..., description="YYYY-MM-DD")):
     try:

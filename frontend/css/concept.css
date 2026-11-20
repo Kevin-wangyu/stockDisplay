@@ -1314,3 +1314,66 @@
   color: var(--accent);
   font-size: 9px;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   C7 策略选股列表（替换概念交集榜）—— 追加覆盖，不改动上方原样式
+   16 列：#/代码/名称/概念/综合分/连池/收盘/涨跌/换手/波动/涨幅/涨停/资金/龙头/+5日高%/+10日高%
+   ═══════════════════════════════════════════════════════════ */
+.v1-c7-head,
+.v1-c7-head + .v1-pick-row,
+.v1-picks-list .v1-pick-row {
+  grid-template-columns:
+    26px 66px 96px minmax(120px, 1fr) 62px 56px
+    58px 62px 58px 62px 62px 54px 74px 62px 70px 76px;
+  min-width: 1210px;
+}
+/* 复盘列（未来N日最高涨幅）：视觉弱化 + 斜体提示为展示/复盘用，非选股条件 */
+.v1-c7-head .c7-fwd-col { color: #b48cff; font-style: italic; }
+.v1-pick-row .c7-fwd-col { color: #b48cff; }
+.c7-hint {
+  font-size: 10px; color: var(--text-dim); font-weight: 400; margin-left: 6px;
+}
+/* 规则1.1 排序指标列：高亮可点表头 + 分数色阶 */
+.v1-c7-head .c7-sort-key { color: #6ea8ff; }
+.v1-pick-row .c7-score { font-weight: 600; color: var(--text); }
+.v1-pick-row .c7-score.c7-score-top { color: #ffb454; }
+/* 规则5.1 连续在池：整行高亮 + 徽标 + 名称星标 */
+.v1-pick-row.c7-streak-row {
+  background: linear-gradient(90deg, rgba(255,180,84,.10), rgba(255,180,84,.02));
+  box-shadow: inset 3px 0 0 #ffb454;
+}
+.v1-pick-row.c7-streak-row:hover { background: rgba(255,180,84,.16); }
+.v1-pick-row .c7-streak-badge {
+  display: inline-block; padding: 1px 6px; border-radius: 8px;
+  background: #ffb454; color: #1a1a1a; font-size: 10px; font-weight: 700;
+  white-space: nowrap;
+}
+.v1-pick-row .c7-streak-dim { color: var(--text-dim); }
+.v1-pick-row .c7-name-star { color: #ffb454; margin-left: 3px; }
+
+/* ═══════════════════════════════════════════════════════════
+   C6/C7 来源标注（新增"来源"列 → 17 列）：追加覆盖
+   C7=龙头严选池(蓝)，C6=补充池(青)，与连池★标注并存
+   ═══════════════════════════════════════════════════════════ */
+.v1-c7-head,
+.v1-c7-head + .v1-pick-row,
+.v1-picks-list .v1-pick-row {
+  grid-template-columns:
+    26px 66px 96px 48px minmax(120px, 1fr) 62px 56px
+    58px 62px 58px 62px 62px 54px 74px 62px 70px 76px;
+  min-width: 1260px;
+}
+.v1-c7-head [data-key="source"] { color: #6ea8ff; }
+.v1-pick-row .c7-src-badge {
+  display: inline-block; padding: 1px 6px; border-radius: 8px;
+  font-size: 10px; font-weight: 700; white-space: nowrap;
+}
+.v1-pick-row .c7-src-badge.src-c7 { background: #2d6cdf; color: #fff; }
+.v1-pick-row .c7-src-badge.src-c6 { background: #1f9e8f; color: #fff; }
+/* C6 补充池整行轻微冷色调，和 C7 严选区分但不抢连池★高亮 */
+.v1-pick-row:has(.c7-src-badge.src-c6):not(.c7-streak-row) {
+  background: rgba(70, 160, 150, .05);
+}
+/* 详情页来源徽标配色 */
+.c7-detail-badge.src-c6 { background: #1f9e8f !important; }
+.c7-detail-badge.src-c7 { background: #2d6cdf !important; }

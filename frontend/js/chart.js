@@ -733,14 +733,14 @@ buildGroupsForDropdown,
 
 const overlayVisible = {};
 document.querySelectorAll(".ma-toggle input").forEach(el => {
-const k = el.dataset.line;
-overlayVisible[k] = el.checked;
-el.parentElement.classList.toggle("active", el.checked);
-el.addEventListener("change", () => {
-    overlayVisible[k] = el.checked;
-    el.parentElement.classList.toggle("active", el.checked);
-    applyOverlays();
-});
+  const k = el.dataset.line;
+  overlayVisible[k] = el.checked;
+  el.parentElement.classList.toggle("active", el.checked);
+  el.addEventListener("change", () => {
+      overlayVisible[k] = el.checked;
+      el.parentElement.classList.toggle("active", el.checked);
+      applyOverlays();
+  });
 });
 
 function applyOverlays() {

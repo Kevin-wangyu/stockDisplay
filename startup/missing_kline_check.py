@@ -219,16 +219,26 @@ def check_recent_missing(n_days: int = 5, auto_backfill: bool = False) -> dict:
         suffix = f" 等 {len(codes)} 只" if len(codes) > 5 else ""
         logger.warning("  %s: %s%s", d, sample, suffix)
 
-    if auto_backfill:
-        logger.info("[missing-check] 开始用 eltdx 补全…")
+    # ⭐ 触发条件：开启了自动补全，或者缺失数量极少（< 50）
+    should_backfill = auto_backfill or (0 < total < 50)
+
+    if should_backfill:
+        if not auto_backfill:
+            logger.info("[missing-check] 缺失数量 %d < 50，自动开启补全…", total)
+        else:
+            logger.info("[missing-check] 开启了 --auto-backfill-missing，开始用 eltdx 补全…")
+            
         result["backfilled"] = _backfill(missing)
-        total_filled = sum(result["backfilled"].values())
-        logger.info("[missing-check] 补全完成：%d 行写入 %d 天",
-                    total_filled, len(result["backfilled"]))
+        total_filled = sum(result["backfilled"].values()) if result["backfilled"] else 0
+        
+        if total_filled > 0:
+            logger.info("[missing-check] 补全完成：%d 行写入 %d 天",
+                        total_filled, len(result["backfilled"]))
+        else:
+            logger.warning("[missing-check] 补全尝试完成，但未获取到有效数据（可能是停牌）")
     else:
-        logger.warning("[missing-check] 未开启自动补全（加 --auto-backfill-missing 启用）")
-        logger.warning("[missing-check] 手动补全：")
-        logger.warning("  python scripts\\backfill_single_stock_day.py <code> <date>")
+        logger.warning("[missing-check] 缺失数量 %d >= 50，未开启自动补全以防卡死", total)
+        logger.warning("[missing-check] 如需强行补全，请加 --auto-backfill-missing 启用")
 
     result["elapsed_s"] = round(time.time() - t0, 1)
     return result

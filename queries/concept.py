@@ -670,12 +670,20 @@ def _build_intersection_picks(top_amount, top_pct, top_limit_up,
 @lru_cache(maxsize=32)
 def get_concept_date_top10(trade_date: str) -> dict:
     from core.tops_cache import get_tops_and_scores_cached
-    market_total, top_amount, top_pct, top_limit_up, _ = \
+    market_total, top_amount, top_pct, top_limit_up, concept_scores = \
         get_tops_and_scores_cached(trade_date)
 
     picks = _load_cached_picks(trade_date) or []
 
     concept_colors = _compute_concept_colors(top_amount, top_pct, top_limit_up)
+
+    # ⭐ 当日龙头概念（score>=0.8，与研究 n_leader_concepts 口径一致）：
+    #    复用上面已算好的 concept_scores，零额外计算。按 score 降序。
+    leader_concepts = sorted(
+        [{"name": k, "score": round(float(v.get("score", 0.0)), 4)}
+         for k, v in (concept_scores or {}).items()
+         if float(v.get("score", 0.0)) >= 0.8],
+        key=lambda x: -x["score"])
 
     return _json_safe({                              # ⭐ 兜底 nan / inf
         "trade_date": trade_date,
@@ -688,6 +696,7 @@ def get_concept_date_top10(trade_date: str) -> dict:
         "intersection_picks": picks,
         "picks_cached": bool(picks),
         "concept_colors": concept_colors,
+        "leader_concepts": leader_concepts,
     })
 
 def _compute_concept_colors(top_amount, top_pct, top_limit_up) -> dict:

@@ -1,6 +1,8 @@
-// ─────────── 界面 1：三榜 + 交集选股 ───────────
-const v1SortState = { key: "importance_index", dir: "desc" };
+// ─────────── 界面 1：三榜 + C7 策略选股 ───────────
+// 默认按规则1.1 综合分降序（C7 口径）；点击表头可切换其它列
+const v1SortState = { key: "c7_score", dir: "desc" };
 let v1LastPicks = [];
+let v1C7Meta = null;   // C7 选股元信息（阈值/口径/缓存状态）
 // ⭐ 天梯榜独立排序状态（与交集榜互不影响）
 const v1LadderSortState = { key: null, dir: null };   // null = 默认后端排序
 let v1LadderLastStocks = [];
@@ -454,89 +456,75 @@ function v1RenderLadder(data) {
 function v1RenderPicks(picks) {
   const sorted = (picks && picks.length) ? v1SortedPicks(picks) : [];
 
-  // ── 表头（动态生成，和行一起进 #v1PicksList） ──
+  // ── 表头：C7 口径列（排序指标用 ▼ 标记，默认综合分降序）──
   const headHtml = `
-    <div class="v1-picks-head">
+    <div class="v1-picks-head v1-c7-head">
       <span>#</span>
       <span data-key="code">代码</span>
       <span data-key="name">名称</span>
-      <span data-key="match_count">命中概念<span class="cfs-resize-handle" data-var="--picks-cfs-w" title="拖动调整宽度">⋮</span></span>
-      <span data-key="match_count" style="text-align:center">×N</span>
-      <span data-key="importance_index" style="text-align:right">重要性</span>
+      <span data-key="source" title="C7=龙头严选池；C6=补充池（无龙头概念，覆盖更广）">来源</span>
+      <span data-key="n_concepts">概念<span class="cfs-resize-handle" data-var="--picks-cfs-w" title="拖动调整宽度">⋮</span></span>
+      <span data-key="c7_score" class="c7-sort-key" title="规则1.1 综合分=z(vol20)+z(ret_5d)+z(turnover_rate)">综合分</span>
+      <span data-key="streak_days" class="c7-sort-key" title="规则5.1 连续在池天数，≥2日特殊标注">连池</span>
       <span data-key="close" style="text-align:right">收盘</span>
       <span data-key="pct_change" style="text-align:right">涨跌%</span>
-      <span data-key="turnover_rate" style="text-align:right">换手%</span>
-      <span data-key="hot_rank" style="text-align:right">热度</span>
-      <span data-key="huge_order_net" style="text-align:right">超大单</span>
-      <span data-key="big_order_net" style="text-align:right">大单</span>
-      <span data-key="medium_order_net" style="text-align:right">中单</span>
-      <span data-key="small_order_net" style="text-align:right">小单</span>
-      <span data-key="fwd_5d" style="text-align:right">+5日</span>
-      <span data-key="fwd_10d" style="text-align:right">+10日</span>
-      <span data-key="fwd_20d" style="text-align:right">+20日</span>
-      <span data-key="fwd_30d" style="text-align:right">+30日</span>
+      <span data-key="turnover_rate" class="c7-sort-key" style="text-align:right">换手%</span>
+      <span data-key="vol20" class="c7-sort-key" style="text-align:right">波动20</span>
+      <span data-key="ret_5d" class="c7-sort-key" style="text-align:right">涨5日%</span>
+      <span data-key="lu_cnt_20d" style="text-align:right">涨停20</span>
+      <span data-key="main_net_norm" style="text-align:right">资金强度</span>
+      <span data-key="n_leader_concepts" style="text-align:right">龙头概念</span>
+      <span data-key="fwd_max_5d" class="c7-fwd-col" style="text-align:right" title="复盘列：未来5日内最高价相对当日收盘的涨幅%；不足5交易日为-">+5日高%</span>
+      <span data-key="fwd_max_10d" class="c7-fwd-col" style="text-align:right" title="复盘列：未来10日内最高价相对当日收盘的涨幅%；不足10交易日为-">+10日高%</span>
     </div>`;
 
   if (!sorted.length) {
     v1El.picksList.innerHTML =
-      headHtml + `<div class="v1-picks-empty">无命中个股</div>`;
+      headHtml + `<div class="v1-picks-empty">该日无 C6/C7 策略选中标的（条件未满足）</div>`;
     return;
   }
 
   const MAX_SHOW = 8;
   const rowsHtml = sorted.map((p, i) => {
-    // ⭐ 优先用 detail（带 gld），fallback 到 matched_concepts
-    const detailMap = {};
-    const detailArr = Array.isArray(p.matched_concepts_detail)
-      ? p.matched_concepts_detail
-      : [];
-    detailArr.forEach(d => {
-      if (d && d.name) detailMap[d.name] = d.gld;
-    });
-
     const cfs = v1SortConcepts(p.matched_concepts || []);
     const shown = cfs.slice(0, MAX_SHOW);
     const more = cfs.length - shown.length;
     const tags =
       shown.map(c => {
         const color = v1ColorForTag(c);
-        const gld = detailMap[c];
-        const gldStr = gld != null ? ` · gld ${gld}` : "";
-        return `<span class="v1-pick-cf cf-${color}" title="关联度 ${gldStr || '未知'}">${v1Escape(c)}</span>`;
+        return `<span class="v1-pick-cf cf-${color}" title="${v1Escape(c)}">${v1Escape(c)}</span>`;
       }).join("")
       + (more > 0 ? `<span class="v1-pick-cf more">+${more}</span>` : "");
     const titleAll = cfs.join("、");
 
     const cls = (v) => v == null ? "" : (v >= 0 ? "up" : "down");
     const num = (v, d = 2) => v == null ? "-" : v.toFixed(d);
-    const impText = p.importance_index != null
-      ? p.importance_index.toFixed(2) : "-";
-    const impCls = v1ImpClass(p.importance_index, p.importance_pct);
-    const impTitle = p.importance_pct != null
-      ? `当日相对强度 ${(p.importance_pct * 100).toFixed(0)}%` +
-        (p.rank_in_picks ? `，第 ${p.rank_in_picks}/${p.total_in_picks} 名` : "")
-      : "";
+    // 规则5.1：连续在池≥2日 → 整行高亮 + 连池列徽标
+    const streakCls = p.is_streak2 ? " c7-streak-row" : "";
+    const streakBadge = p.is_streak2
+      ? `<span class="c7-streak-badge" title="规则5.1：连续在池≥2日，优先关注">连${p.streak_days}日</span>`
+      : `<span class="c7-streak-dim">${p.streak_days || 1}</span>`;
+    const scoreCls = (i < Math.max(1, Math.ceil(sorted.length * 0.5))) ? "c7-score-top" : "";
 
     return `
-      <div class="v1-pick-row">
+      <div class="v1-pick-row${streakCls}" data-code="${v1Escape(p.code)}">
         <span class="col-idx">${i + 1}</span>
-        <span class="col-code">${v1Escape(p.code)}</span>
-        <span class="col-name" title="${v1Escape(p.name)}">${v1Escape(p.name)}</span>
+        <span class="col-code" title="打开个股详情 · ${v1Escape(p.code)}">${v1Escape(p.code)}</span>
+        <span class="col-name" title="${v1Escape(p.name)}${p.is_streak2 ? ' · 连续在池≥2日' : ''}">${v1Escape(p.name)}${p.is_streak2 ? '<span class="c7-name-star">★</span>' : ''}</span>
+        <span class="col-num"><span class="c7-src-badge ${p.source === 'C7' ? 'src-c7' : 'src-c6'}" title="${p.source === 'C7' ? 'C7 龙头严选池（命中龙头概念，命中率略高）' : 'C6 补充池（无龙头概念，覆盖约3倍）'}">${p.source === 'C7' ? 'C7' : 'C6'}</span></span>
         <span class="col-cfs" title="${v1Escape(titleAll)}">${tags}</span>
-        <span class="col-cnt">×${p.match_count}</span>
-        <span class="col-num col-importance ${impCls}" title="${impTitle}">${impText}</span>
+        <span class="col-num c7-score ${scoreCls}" title="综合分=z(波动)+z(5日涨)+z(换手)，越高越优先">${num(p.c7_score, 2)}</span>
+        <span class="col-num c7-streak" title="连续满足C7的交易日数">${streakBadge}</span>
         <span class="col-num">${num(p.close)}</span>
         <span class="col-num ${cls(p.pct_change)}">${v1FmtPctShort(p.pct_change)}</span>
         <span class="col-num">${num(p.turnover_rate)}</span>
-        <span class="col-num">${p.hot_rank == null ? "-" : p.hot_rank.toFixed(0)}</span>
-        <span class="col-net">${v1NetCell(p.huge_order_net,   p.huge_order_net_norm)}</span>
-        <span class="col-net">${v1NetCell(p.big_order_net,    p.big_order_net_norm)}</span>
-        <span class="col-net">${v1NetCell(p.medium_order_net, p.medium_order_net_norm)}</span>
-        <span class="col-net">${v1NetCell(p.small_order_net,  p.small_order_net_norm)}</span>
-        <span class="col-num ${cls(p.fwd_5d)}">${v1FmtPctShort(p.fwd_5d)}</span>
-        <span class="col-num ${cls(p.fwd_10d)}">${v1FmtPctShort(p.fwd_10d)}</span>
-        <span class="col-num ${cls(p.fwd_20d)}">${v1FmtPctShort(p.fwd_20d)}</span>
-        <span class="col-num ${cls(p.fwd_30d)}">${v1FmtPctShort(p.fwd_30d)}</span>
+        <span class="col-num">${num(p.vol20)}</span>
+        <span class="col-num ${cls(p.ret_5d)}">${v1FmtPctShort(p.ret_5d)}</span>
+        <span class="col-num">${p.lu_cnt_20d}</span>
+        <span class="col-num ${p.main_net_norm > 0 ? 'up' : ''}">${num(p.main_net_norm, 3)}</span>
+        <span class="col-num">${p.n_leader_concepts}</span>
+        <span class="col-num c7-fwd-col ${cls(p.fwd_max_5d)}" title="复盘列，非选股条件">${p.fwd_max_5d == null ? '-' : '+' + num(p.fwd_max_5d) + '%'}</span>
+        <span class="col-num c7-fwd-col ${cls(p.fwd_max_10d)}" title="复盘列，非选股条件">${p.fwd_max_10d == null ? '-' : '+' + num(p.fwd_max_10d) + '%'}</span>
       </div>`;
   }).join("");
 
@@ -588,16 +576,22 @@ async function loadView1() {
     // 天梯榜
     v1RenderLadder(ladder);
 
-    // 交集榜
-    v1LastPicks = data.intersection_picks || [];
-    v1RenderPicks(v1LastPicks);
-        // 未缓存提示
-    if (!data.picks_cached) {
-      v1El.picksList.innerHTML = `
-        <div class="v1-picks-empty">
-          该日期未预计算交集榜，请运行 <code>scripts\\recompute_picks.py</code>
-        </div>`;
+    // ── C7 策略选股：独立请求，失败不影响三榜/天梯 ──
+    v1LastPicks = [];
+    v1C7Meta = null;
+    try {
+      const r3 = await fetch(`/api/concept/c7_picks?trade_date=${date}`);
+      if (r3.ok) {
+        const c7 = await r3.json();
+        if (c7.ok && c7.data) {
+          v1LastPicks = c7.data.picks || [];
+          v1C7Meta = c7.meta || null;
+        }
+      }
+    } catch (e3) {
+      console.warn("[C7选股] 请求失败，列表留空", e3);
     }
+    v1RenderPicks(v1LastPicks);
 
     // 天梯榜未缓存提示
     if (ladder.cached === false) {
@@ -608,11 +602,26 @@ async function loadView1() {
     }
 
     // 状态栏（不用 reduce）
+    // ⭐ 第1项改进：右上角原「日期」替换为「当日龙头概念」（score>=0.8，降序）
     const ladderCount = Array.isArray(ladder.stocks)
       ? ladder.stocks.length : 0;
-    const picksCount = Array.isArray(data.intersection_picks)
-      ? data.intersection_picks.length : 0;
-    setStatus(`${date} · 天梯 ${ladderCount} 只 · 交集股 ${picksCount} 只`);
+    const picksCount = v1LastPicks.length;
+    const nC7 = v1LastPicks.filter(p => p.source === 'C7').length;
+    const nC6 = v1LastPicks.filter(p => p.source === 'C6').length;
+    const streakCount = v1LastPicks.filter(p => p.is_streak2).length;
+    const cacheTag = v1C7Meta
+      ? (v1C7Meta.cache === 'local_parquet' ? '本地预计算'
+         : v1C7Meta.cache === 'stable_lru' ? '缓存' : '实时')
+      : '';
+    const leaders = Array.isArray(data.leader_concepts) ? data.leader_concepts : [];
+    const leaderText = leaders.length
+      ? '龙头：' + leaders.slice(0, 3).map(l => l.name).join('、')
+        + (leaders.length > 3 ? ` 等${leaders.length}个` : '')
+      : '龙头：无';
+    setStatus(`${leaderText} · 天梯 ${ladderCount} 只 · 策略池 ${picksCount} 只`
+      + ` (C7 ${nC7} / C6补充 ${nC6})`
+      + (streakCount ? ` · 连池≥2日 ${streakCount} 只 ★` : '')
+      + (cacheTag ? ` · ${cacheTag}` : ''));
   } catch (e) {
     console.error(e);
     setStatus("错误：" + e.message, true);
@@ -698,17 +707,21 @@ document.addEventListener("click", (e) => {
     window.switchToView2(code, name, date);
   }
 });
-// ─── 交集榜点代码/名称 → 新窗口 index.html ───
+// ─── C7选股榜点代码/名称 → 新窗口 index.html（携带规则5.1连池标注）───
 document.addEventListener("click", (e) => {
   const cell = e.target.closest(".v1-pick-row .col-code, .v1-pick-row .col-name");
   if (!cell) return;
   const row = cell.closest(".v1-pick-row");
-  const codeCell = row?.querySelector(".col-code");
-  const code = codeCell?.textContent.trim();
+  const code = row?.dataset.code || row?.querySelector(".col-code")?.textContent.trim();
   if (!code) return;
   const center = document.getElementById("v1Date")?.value;
+  // 从当前 C7 结果里找该股连池信息，带入详情页
+  const pk = (v1LastPicks || []).find(p => p.code === code);
+  const streak = pk ? (pk.streak_days || 1) : 1;
+  const src = pk ? (pk.source || 'C7') : 'C7';
   const url = `index.html?code=${encodeURIComponent(code)}`
-            + (center ? `&center=${encodeURIComponent(center)}` : "");
+            + (center ? `&center=${encodeURIComponent(center)}` : "")
+            + `&c7=1&streak=${streak}&psrc=${encodeURIComponent(src)}`;
   window.open(url, "_blank");
 });
 // ─── 天梯榜点代码/名称 → 新窗口 index.html（用 data-code 而不是文本） ───
