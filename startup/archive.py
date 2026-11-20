@@ -20,9 +20,16 @@ def maybe_rebuild_month_archive() -> None:
     today = date.today()
     cur_month = today.strftime("%Y-%m")
 
+    # 概念交集选股已于 2026-11-20 停用：serve 不再重建 concept_picks 的月合并。
+    # 仅影响 serve 启动时的自动重建；独立 scripts/archive_month.py 仍可按需手动处理。
+    # 既有 concept_picks 日分区与 compact 文件保留不动（零删除）。
+    skip_kinds = {"concept_picks"}
+
     try:
         con = _dd.connect()
         for kind, kdir in KINDS.items():
+            if kind in skip_kinds:
+                continue
             if not kdir.exists():
                 continue
 

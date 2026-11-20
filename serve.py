@@ -110,10 +110,10 @@ def main() -> None:
             rebuild_market_amount, rebuild_daily_pct, rebuild_limit_up_streak,
         )
         from core.loaders import _list_partition_dates
-        from queries import (
-            _get_tops_and_scores, _build_intersection_picks,
-        )
-        from core.picks_cache import _save_picks_cache
+        # 概念交集选股（concept_picks）已于 2026-11-20 停用：前端已改用
+        # C6/C7 策略池，serve 不再计算概念交集、也不再补最新日 picks。
+        # 原 _get_tops_and_scores / _build_intersection_picks / _save_picks_cache
+        # 调用一并移除；历史 parquet 数据保留不动（零删除）。
         from startup.archive import maybe_rebuild_month_archive
 
         n_ma = rebuild_market_amount()
@@ -160,19 +160,8 @@ def main() -> None:
                 rebuild_tops_cache(missing)
         except Exception:
             logging.getLogger(__name__).exception("[serve] _tops_cache 增量失败")
-            
-        # 补最新日期的 picks
-        all_td = _list_partition_dates(CONCEPT_DIR)
-        for d in all_td[-1:]:
-            p = CONCEPT_PICKS_DIR / f"trade_date={d}" / "part.parquet"
-            if not p.exists():
-                try:
-                    mt, ta, tp, tl, cs = _get_tops_and_scores(d)
-                    picks = _build_intersection_picks(ta, tp, tl, d, mt, cs)
-                    _save_picks_cache(d, picks)
-                    logger.info(f"[serve] {d} picks 已生成")
-                except Exception:
-                    logger.exception("[serve] %s picks 生成失败", d)
+            # 注：原「补最新日期 concept_picks」块已移除（概念交集选股停用），
+        # 其历史 parquet 保留不动。C6/C7 策略池更新见上方 c7_pool 增量块。
     except Exception:
         logger.exception("增量更新失败，继续启动")
 

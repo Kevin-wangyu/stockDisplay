@@ -56,8 +56,21 @@ def _list_quote_dates() -> list[str]:
         DATA_DIR / "quote")
 
 
-def _pool_sql(win_dates_sql: str) -> str:
-    """win_dates_sql: 形如 (SELECT d FROM (...日期...) ) 的日期集合子查询。"""
+def _pool_sql(win_dates_sql: str, target_dates_sql: str = None) -> str:
+    """构造策略池 SQL。
+
+    win_dates_sql:   计算窗口的日期集合（含 buffer），供窗口特征与 fwd 使用。
+    target_dates_sql: 仅需要产出结果的目标日集合，供 concepts 使用。
+
+    性能说明（2026-11-20 线上 44s 根因）：
+      concepts CTE 的 unnest + string_agg(DISTINCT ... ORDER BY) 是全 SQL 唯一瓶颈，
+      对整个 buffer 窗口（81 日 × 全市场）做聚合，但结果只写目标日（df 随后被
+      df[trade_date.isin(target)] 过滤），其余全是白算。把它裁到目标日后，
+      实测 11.2s → 1.2s（9.4×），目标日 24 字段逐字段口径零差异。
+      fwd 保持全窗口：RANGE BETWEEN ... FOLLOWING 需要未来行，裁它会丢复盘列。
+    """
+    if target_dates_sql is None:
+        target_dates_sql = win_dates_sql
     return f"""
 WITH
 qx AS (
@@ -134,7 +147,7 @@ concepts AS (
          string_agg(DISTINCT t.x, ';' ORDER BY t.x) AS cfs,
          count(DISTINCT t.x) AS n_cfs
   FROM {_CG}, unnest(string_split(concepts,';')) AS t(x)
-  WHERE substr(CAST(trade_date AS VARCHAR),1,10) IN {win_dates_sql}
+  WHERE substr(CAST(trade_date AS VARCHAR),1,10) IN {target_dates_sql}
   GROUP BY substr(CAST(trade_date AS VARCHAR),1,10), code
 ),
 fwd AS (
@@ -259,6 +272,11 @@ def rebuild_c7_pool(force: bool = False, limit_days: int = 200,
     buf_start = max(0, idx - buffer_days)
     buffered = all_td[buf_start:]
     win_dates_sql = "(" + ",".join(f"'{d}'" for d in buffered) + ")"
+    # concepts 聚合只服务目标日：裁到 target_dates 是 44s→1s 的关键（见 _pool_sql 说明）。
+    # 多目标日时用 earliest..latest 区间，避免遗漏中间日；实际增量多为单日。
+    tgt_lo = max(0, idx)
+    tgt_hi = all_td.index(max(target_dates))
+    target_dates_sql = "(" + ",".join(f"'{d}'" for d in all_td[tgt_lo:tgt_hi + 1]) + ")"
 
     try:
         _TMP.mkdir(parents=True, exist_ok=True)
@@ -267,9 +285,9 @@ def rebuild_c7_pool(force: bool = False, limit_days: int = 200,
         con.execute("SET threads=8")
         try:
             t1 = time.time()
-            df = con.execute(_pool_sql(win_dates_sql)).df()
-            logger.info("[c7_pool] 计算 %d 行耗时 %.1fs（buffer %d 日）",
-                        len(df), time.time()-t1, len(buffered))
+            df = con.execute(_pool_sql(win_dates_sql, target_dates_sql)).df()
+            logger.info("[c7_pool] 计算 %d 行耗时 %.1fs（buffer %d 日，concepts 裁到 %d 目标日区间）",
+                        len(df), time.time()-t1, len(buffered), tgt_hi - tgt_lo + 1)
         finally:
             con.close()
     except Exception:
