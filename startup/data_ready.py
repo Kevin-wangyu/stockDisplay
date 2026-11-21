@@ -74,23 +74,29 @@ def ensure_data_ready(force_manual_cookie: bool = False) -> None:
         _prompt_cookie_and_fetch(prev_d, force_manual=force_manual_cookie)
         return
 
-    # ── 窗口 2：9:15 ~ 15:30，盘中，拒绝补数据 ──
-    if now_t < T_1530:
+    # ── 窗口 2：9:15 ~ 15:30，仅限“今日是交易日”时生效 ──
+    if now_t < T_1530 and _is_trading_day(today):
         prev_d = _prev_trading_day(today)
         if prev_d and not _has_quote_data(prev_d):
-            logger.warning(f"[serve] ⚠ 上一交易日 {prev_d} 数据未更新，且已超过 09:15")
-            logger.info("[serve]   无法自动获取（行情源仅支持补拉至 09:15），"
-                        "请手动获取后再运行 serve.py")
+            logger.info(f"[serve] ⚠ 上一交易日 {prev_d} 数据未更新，且已超过 09:15")
+            logger.info("[serve]   无法自动获取（行情源仅支持补拉至 09:15），请手动获取后再运行 serve.py")
         else:
-            logger.info(f"[serve] 盘中时段（09:15~15:30），跳过数据更新")
+            logger.info("[serve] 盘中时段（09:15~15:30），跳过数据更新")
         return
 
-    # ── 窗口 3：15:30 后，更新当日数据 ──
-    if not _is_trading_day(today):
-        logger.info(f"[serve] 今日（{today}）非交易日，跳过当日数据更新")
+    # ── 窗口 3：15:30 后，更新最近一个交易日的数据 ──
+    if _is_trading_day(today):
+        target_date = today
+    else:
+        target_date = _prev_trading_day(today)
+        if target_date is None:
+            logger.warning("[serve] 无法确定最近交易日，跳过数据更新")
+            return
+        logger.info(f"[serve] 今日（{today}）非交易日，检查最近交易日（{target_date}）")
+
+    if _has_quote_data(target_date):
+        logger.info(f"[serve] 最近交易日（{target_date}）已有数据，跳过 cookie 输入")
         return
-    if _has_quote_data(today):
-        logger.info(f"[serve] 今日（{today}）已有数据，跳过 cookie 输入")
-        return
-    logger.info(f"[serve] 检测到今日（{today}）无数据，开始拉取…")
-    _prompt_cookie_and_fetch(today, force_manual=force_manual_cookie)
+
+    logger.info(f"[serve] 检测到最近交易日（{target_date}）无数据，开始拉取…")
+    _prompt_cookie_and_fetch(target_date, force_manual=force_manual_cookie)

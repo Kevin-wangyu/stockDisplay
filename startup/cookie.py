@@ -9,7 +9,7 @@ def prompt_and_reload(force_manual: bool = False) -> None:
     val = None
 
     if not force_manual:
-        print("[serve] 尝试自动获取 ASPSessionID…")
+        logger.info("[serve] 尝试自动获取 ASPSessionID…")
         try:
             from core.aspsession import get_aspsessionid_with_cache
             val = get_aspsessionid_with_cache()
@@ -18,9 +18,9 @@ def prompt_and_reload(force_manual: bool = False) -> None:
             val = None
 
         if val:
-            print(f"[serve] ✅ 自动获取成功: {val[:8]}…")
+            logger.info(f"[serve] ✅ 自动获取成功: {val[:8]}…")
         else:
-            print("[serve] ❌ 自动获取失败，转手动输入")
+            logger.info("[serve] ❌ 自动获取失败，转手动输入")
 
     if not val:
         print()

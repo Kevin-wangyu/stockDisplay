@@ -151,23 +151,50 @@ async function load() {
         // ── 严格过滤：日期合法 + OHLC 均 > 0 ──
         // ── 深度标准化：兼容 null / 0 / 字符串日期 ──
         const _normCandle = (r) => {
-        if (!r || typeof r !== "object") return null;
-        const rawTime = r.trade_date;
-        if (rawTime == null) return null;
-        const time = String(rawTime).slice(0, 10);
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(time)) return null;
+          if (!r || typeof r !== "object") return null;
+          const time = String(r.trade_date ?? "").slice(0, 10);
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(time)) return null;
+          let o = r.open, h = r.high, l = r.low, c = r.close;
+          if (o == null || h == null || l == null || c == null) return null;
+          let on = Number(o), hn = Number(h), ln = Number(l), cn = Number(c);
+          if (!Number.isFinite(on) || !Number.isFinite(hn) || !Number.isFinite(ln) || !Number.isFinite(cn)) return null;
+          if (on <= 0 || hn <= 0 || ln <= 0 || cn <= 0) return null;
 
-        const o = r.open, h = r.high, l = r.low, c = r.close;
-        // 严格过滤：任何一个为 null / undefined / 空串 直接丢弃
-        if (o == null || h == null || l == null || c == null) return null;
+          // ⭐ 解决一字板颜色错误：根据涨跌幅微调 open/close
+      // ⭐ 解决一字板、正T、倒T颜色错误
+      if (on === cn) {
+        const pct = Number(r.pct_change);
+        const upperShadow = hn - on; // 上影线
+        const lowerShadow = on - ln; // 下影线
+        let forceColor = null;
 
-        const on = Number(o), hn = Number(h), ln = Number(l), cn = Number(c);
-        if (!Number.isFinite(on) || !Number.isFinite(hn)
-            || !Number.isFinite(ln) || !Number.isFinite(cn)) return null;
-        // 过滤 0 值和负数
-        if (on <= 0 || hn <= 0 || ln <= 0 || cn <= 0) return null;
+        if (upperShadow === 0 && lowerShadow === 0) {
+          // 一字板：看涨跌幅
+          if (pct > 0) forceColor = "red";
+          else if (pct < 0) forceColor = "green";
+        } else if (upperShadow > lowerShadow) {
+          // 倒 T（上影线长）：显示绿色
+          forceColor = "green";
+        } else if (lowerShadow > upperShadow) {
+          // 正 T（下影线长）：显示红色
+          forceColor = "red";
+        } else {
+          // 十字星：看涨跌幅
+          if (pct > 0) forceColor = "red";
+          else if (pct < 0) forceColor = "green";
+        }
 
-        return { time, open: on, high: hn, low: ln, close: cn };
+        // 通过微调 open/close 来强行改变图表颜色（肉眼不可见）
+        if (forceColor === "green") {
+          on = cn + 0.001; // open > close，强制变绿
+          hn = Math.max(hn, on);
+        } else if (forceColor === "red") {
+          cn = on + 0.001; // close > open，强制变红
+          hn = Math.max(hn, cn);
+        }
+      }
+
+          return { time, open: on, high: hn, low: ln, close: cn };
         };
 
         const _map = new Map();
